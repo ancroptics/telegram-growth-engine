@@ -11,7 +11,6 @@ from database.connection import Database
 from services.health_server import start_health_server
 from services.scheduler import setup_scheduler
 
-# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=getattr(logging, Config.LOG_LEVEL, logging.INFO)
@@ -19,14 +18,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def post_init(app):
-    """Initialize after app starts."""
-    await Database.run_migrations()
-    logger.info("Database initialized")
+    try:
+        await Database.run_migrations()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Database migration error: {e}")
     setup_scheduler(app)
     logger.info("Scheduler started")
+    bot_info = await app.bot.get_me()
+    Config.BOT_USERNAME = bot_info.username
+    logger.info(f"Bot username: @{Config.BOT_USERNAME}")
 
 def setup_handlers(app):
-    """Register all handlers."""
     from handlers.start import start_command, help_command, dashboard_command
     from handlers.callbacks import callback_router
     from handlers.join_request import join_request_handler
@@ -39,7 +42,6 @@ def setup_handlers(app):
     from handlers.admin_panel import admin_ban_command, admin_unban_command, admin_set_tier_command, admin_broadcast_handler
     from handlers.welcome_dm import welcome_message_handler
 
-    # Commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("dashboard", dashboard_command))
@@ -53,17 +55,9 @@ def setup_handlers(app):
     app.add_handler(CommandHandler("ban", admin_ban_command))
     app.add_handler(CommandHandler("unban", admin_unban_command))
     app.add_handler(CommandHandler("settier", admin_set_tier_command))
-
-    # Callbacks
     app.add_handler(CallbackQueryHandler(callback_router))
-
-    # Join requests
     app.add_handler(ChatJoinRequestHandler(join_request_handler))
-
-    # Channel detection
     app.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
-
-    # Message handlers (order matters - specific first)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
         message_router
@@ -74,23 +68,13 @@ def setup_handlers(app):
     ))
 
 async def message_router(update, context):
-    """Route text messages to appropriate handlers."""
     from handlers.admin_panel import admin_broadcast_handler
     from handlers.broadcast import broadcast_message_handler
     from handlers.template_mgmt import template_content_handler
     from handlers.auto_poster import autopost_content_handler
     from handlers.clone_bot import clone_token_handler
     from handlers.welcome_dm import welcome_message_handler
-
-    handlers = [
-        admin_broadcast_handler,
-        broadcast_message_handler,
-        template_content_handler,
-        autopost_content_handler,
-        clone_token_handler,
-        welcome_message_handler,
-    ]
-    for handler in handlers:
+    for handler in [admin_broadcast_handler, broadcast_message_handler, template_content_handler, autopost_content_handler, clone_token_handler, welcome_message_handler]:
         try:
             if await handler(update, context):
                 return
@@ -98,11 +82,9 @@ async def message_router(update, context):
             logger.error(f"Handler error: {e}")
 
 async def media_router(update, context):
-    """Route media messages."""
     from handlers.broadcast import broadcast_message_handler
     from handlers.template_mgmt import template_content_handler
     from handlers.welcome_dm import welcome_message_handler
-
     for handler in [broadcast_message_handler, template_content_handler, welcome_message_handler]:
         try:
             if await handler(update, context):
@@ -111,9 +93,13 @@ async def media_router(update, context):
             logger.error(f"Media handler error: {e}")
 
 def main():
-    """Start the bot."""
-    logger.info(f"Starting Telegram Growth Engine v3.0")
-    logger.info(f"Bot: @{Config.BOT_USERNAME or 'unknown'}")
+    logger.info("Starting Telegram Growth Engine v3.0")
+    if not Config.BOT_TOKEN:
+        logger.critical("BOT_TOKEN not set! Exiting.")
+        sys.exit(1)
+    if not Config.DATABASE_URL:
+        logger.critical("DATABASE_URL not set! Exiting.")
+        sys.exit(1)
 
     app = (
         ApplicationBuilder()
@@ -121,33 +107,23 @@ def main():
         .post_init(post_init)
         .build()
     )
-
     setup_handlers(app)
 
-    # Start health server in background
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    import threading
+    def run_health():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(start_health_server())
+        loop.run_forever()
+    health_thread = threading.Thread(target=run_health, daemon=True)
+    health_thread.start()
+    logger.info("Health server thread started")
 
-    async def run():
-        await start_health_server()
-        logger.info("Health server started")
-        async with app:
-            await app.start()
-            logger.info("Bot started polling")
-            await app.updater.start_polling(
-                drop_pending_updates=True,
-                allowed_updates=["message", "callback_query", "chat_join_request", "my_chat_member"]
-            )
-            # Keep running
-            stop_event = asyncio.Event()
-            await stop_event.wait()
-
-    try:
-        loop.run_until_complete(run())
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
-    finally:
-        loop.close()
+    logger.info("Starting bot polling...")
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=["message", "callback_query", "chat_join_request", "my_chat_member"]
+    )
 
 if __name__ == "__main__":
     main()
