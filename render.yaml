@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: telegram-growth-engine
+    runtime: docker
+    repo: https://github.com/ancroptics/telegram-growth-engine
+    branch: main
+    plan: free
+    region: oregon
+    autoDeploy: true
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
