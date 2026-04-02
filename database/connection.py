@@ -1,6 +1,7 @@
 """Async PostgreSQL connection pool."""
 import asyncio
 import logging
+import ssl as ssl_module
 import asyncpg
 from config import Config
 
@@ -12,11 +13,32 @@ class Database:
     @classmethod
     async def get_pool(cls):
         if cls._pool is None or cls._pool._closed:
-            cls._pool = await asyncpg.create_pool(
-                Config.DATABASE_URL, min_size=2, max_size=10,
-                command_timeout=60, statement_cache_size=0,
-            )
-            logger.info("Database pool created")
+            ssl_ctx = ssl_module.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl_module.CERT_NONE
+            dsn = Config.DATABASE_URL
+            if '?' not in dsn:
+                dsn += '?sslmode=require'
+            elif 'sslmode' not in dsn:
+                dsn += '&sslmode=require'
+            try:
+                cls._pool = await asyncpg.create_pool(
+                    dsn, min_size=1, max_size=5,
+                    command_timeout=60, statement_cache_size=0,
+                    ssl=ssl_ctx,
+                )
+                logger.info("Database pool created")
+            except Exception as e:
+                logger.error(f"Database pool creation failed: {e}")
+                try:
+                    cls._pool = await asyncpg.create_pool(
+                        Config.DATABASE_URL, min_size=1, max_size=5,
+                        command_timeout=60, statement_cache_size=0,
+                    )
+                    logger.info("Database pool created (no SSL)")
+                except Exception as e2:
+                    logger.error(f"Database pool creation failed (no SSL): {e2}")
+                    raise
         return cls._pool
 
     @classmethod
