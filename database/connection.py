@@ -28,7 +28,8 @@ def init_db():
         }
         logger.info("Using Supabase REST API")
     elif DATABASE_URL:
-        logger.info(f"Using direct PostgreSQL via DATABASE_URL (host: {DATABASE_URL.split('@')[1].split('/')[0] if '@' in DATABASE_URL else 'unknown'})")
+        host = DATABASE_URL.split("@")[1].split("/")[0] if "@" in DATABASE_URL else "unknown"
+        logger.info(f"Using direct PostgreSQL via DATABASE_URL (host: {host})")
     else:
         logger.error("No database configuration found!")
 
@@ -140,7 +141,7 @@ async def table_delete(table, filters):
                 return False
             return True
     else:
-        clauses = [f"{k} = ${i+1}" for i, k in enumerate(filters.keys())]
+        clauses = [f"{k} = ${i+1}" for i, k in enumerate(filters.keys())]        
         query = f"DELETE FROM {table} WHERE {' AND '.join(clauses)}"
         await _pg_execute(query, list(filters.values()))
         return True
@@ -169,11 +170,35 @@ async def _get_pool():
     if _pool is None:
         import asyncpg
         import ssl
+        from urllib.parse import urlparse, unquote
+        
         ssl_ctx = ssl.create_default_context()
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = ssl.CERT_NONE
+        
+        # Parse DATABASE_URL manually to handle dots in username
+        parsed = urlparse(DATABASE_URL)
+        user = unquote(parsed.username or "")
+        password = unquote(parsed.password or "")
+        host = parsed.hostname or ""
+        port = parsed.port or 5432
+        database = (parsed.path or "/postgres").lstrip("/")
+        
+        logger.info(f"Connecting to PG: user={user}, host={host}, port={port}, db={database}")
+        
         try:
-            _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3, ssl=ssl_ctx)
+            _pool = await asyncpg.create_pool(
+                user=user,
+                password=password,
+                host=host,
+                port=port,
+                database=database,
+                min_size=1,
+                max_size=3,
+                ssl=ssl_ctx,
+                command_timeout=30,
+                statement_cache_size=0,  # Required for transaction pooler
+            )
             logger.info("PostgreSQL pool created successfully")
         except Exception as e:
             logger.error(f"Failed to create PG pool: {e}")
