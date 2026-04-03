@@ -12,7 +12,6 @@ from database.connection import init_db
 from services.health_server import start_health_server
 from services.scheduler import setup_scheduler
 
-# Logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -20,7 +19,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
-
 
 async def error_handler(update: object, context) -> None:
     """Global error handler."""
@@ -33,16 +31,18 @@ async def error_handler(update: object, context) -> None:
         except Exception:
             pass
 
-
 def main():
     """Initialize and run the bot."""
     if not Config.validate():
         logger.critical("Invalid configuration. Exiting.")
         return
 
-    # Initialize DB
     init_db()
     logger.info("Database initialized")
+
+    # Start health server on PORT for Render health checks
+    start_health_server()
+    logger.info(f"Health server running on port {Config.PORT}")
 
     # Build application
     app = Application.builder().token(Config.BOT_TOKEN).build()
@@ -81,17 +81,16 @@ def main():
     app.add_handler(CommandHandler("unban", admin_unban_command))
     app.add_handler(CommandHandler("settier", admin_set_tier_command))
 
-    # --- Callback query handler (routes all button presses) ---
+    # Callback query handler
     app.add_handler(CallbackQueryHandler(callback_router))
 
-    # --- Join request handler ---
+    # Join request handler
     app.add_handler(ChatJoinRequestHandler(join_request_handler))
 
-    # --- Chat member handler (bot added/removed from channels) ---
+    # Chat member handler
     app.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
 
-    # --- Message handlers (order matters — most specific first) ---
-    # Template content (user is creating a template)
+    # Message handler (routes based on user_data state)
     app.add_handler(MessageHandler(
         filters.ALL & ~filters.COMMAND & filters.ChatType.PRIVATE,
         _text_message_router
@@ -103,25 +102,9 @@ def main():
     # Setup scheduler
     setup_scheduler(app)
 
-    # Run with webhook or polling
-    if Config.WEBHOOK_URL:
-        logger.info(f"Starting webhook mode on {Config.HOST}:{Config.PORT}")
-        # Start health server in background
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        app.run_webhook(
-            listen=Config.HOST,
-            port=Config.PORT,
-            url_path=Config.WEBHOOK_PATH,
-            webhook_url=f"{Config.WEBHOOK_URL}{Config.WEBHOOK_PATH}",
-            secret_token=Config.WEBHOOK_SECRET,
-            drop_pending_updates=True,
-        )
-    else:
-        logger.info("Starting polling mode")
-        app.run_polling(drop_pending_updates=True)
-
+    # Always use polling mode (simpler, more reliable on Render free tier)
+    logger.info("Starting bot in polling mode...")
+    app.run_polling(drop_pending_updates=True)
 
 async def _text_message_router(update: Update, context) -> None:
     """Route text messages based on user_data state."""
@@ -149,9 +132,7 @@ async def _text_message_router(update: Update, context) -> None:
     elif ud.get("fs_add_for"):
         await handle_force_sub_add(update, context)
     else:
-        # Default: no active state, ignore or show help
         pass
-
 
 if __name__ == "__main__":
     main()
