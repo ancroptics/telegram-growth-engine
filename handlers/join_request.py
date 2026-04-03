@@ -1,4 +1,4 @@
-"""Handle chat join requests — core bot functionality."""
+"""Handle chat join requests \u2014 core bot functionality."""
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
@@ -26,28 +26,23 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     logger.info(f"Join request from {user_id} for chat {chat_id} ({chat.title})")
 
-    # Get channel config
     channel = await get_managed_channel(chat_id)
     if not channel:
         logger.warning(f"Join request for unmanaged channel {chat_id}")
         return
 
-    # Log the request
     await log_join_request(user_id, chat_id, status="pending")
     await update_channel_stats(chat_id, requests=1)
 
-    # Register end user
     await get_or_create_end_user(
         user_id=user_id,
         username=user.username,
         first_name=user.first_name,
     )
 
-    # Check force subscribe
     if channel.get("force_subscribe_enabled"):
         force_channels = await get_force_sub_channels(chat_id)
         if force_channels:
-            # Check if user has joined all required channels
             all_joined = True
             missing_channels = []
             for fc in force_channels:
@@ -64,12 +59,11 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     pass
 
             if not all_joined:
-                # Send DM with force subscribe buttons
                 buttons = []
                 for mc in missing_channels:
                     name = mc.lstrip("@")
                     buttons.append([InlineKeyboardButton(
-                        f"\ud83d\udc49 Join @{name}",
+                        f"\U0001f449 Join @{name}",
                         url=f"https://t.me/{name}"
                     )])
                 buttons.append([InlineKeyboardButton(
@@ -79,7 +73,7 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 try:
                     await context.bot.send_message(
                         user_id,
-                        f"\ud83d\udd12 <b>Join {chat.title}</b>\n\n"
+                        f"\U0001f512 <b>Join {chat.title}</b>\n\n"
                         f"To get approved, please join these channels first:\n",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup(buttons),
@@ -87,15 +81,12 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     await update_channel_stats(chat_id, dms_sent=1)
                 except Exception as e:
                     logger.error(f"Failed to send force sub DM to {user_id}: {e}")
-                return  # Don't auto-approve yet
+                return
 
-    # Check drip mode
     if channel.get("drip_enabled"):
         logger.info(f"Drip mode active for {chat_id} \u2014 request queued")
-        # Don't approve now, scheduler will handle it
         return
 
-    # Auto approve
     if channel.get("auto_approve", True):
         try:
             await join_request.approve()
@@ -106,24 +97,18 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             logger.error(f"Failed to approve {user_id} for {chat_id}: {e}")
             return
 
-    # Send welcome DM
     if channel.get("welcome_dm_enabled"):
         try:
-            # Get welcome message (with i18n support)
             lang_code = user.language_code
             welcome_text = get_welcome_for_language(channel, lang_code)
             if not welcome_text:
                 welcome_text = channel.get("welcome_message", "")
 
             if welcome_text:
-                # Replace variables
                 welcome_text = replace_variables(welcome_text, user=user, channel=channel)
-
-                # Add watermark for free tier
                 watermark = await get_watermark(channel, channel.get("owner_id", 0))
                 welcome_text += watermark
 
-                # Check for welcome media
                 welcome_media_id = channel.get("welcome_media_file_id")
                 welcome_media_type = channel.get("welcome_media_type")
 
