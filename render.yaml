@@ -10,13 +10,13 @@ services:
     branch: main
     envVars:
       - key: BOT_TOKEN
-        value: "8196680231:AAER9EAE2l2GAAFdnJ77ROm3K-y4Wf37nwE"
+        sync: false
       - key: DATABASE_URL
-        value: "postgresql://postgres:Kaushtubh.1@db.yholtsvlkpcxclwecpfu.supabase.co:5432/postgres"
+        sync: false
       - key: ADMIN_IDS
-        value: "8362763548"
+        sync: false
       - key: SUPERADMIN_IDS
-        value: "8362763548"
+        sync: false
       - key: PORT
         value: "10000"
       - key: LOG_LEVEL
