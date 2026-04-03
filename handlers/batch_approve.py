@@ -1,88 +1,134 @@
-from html import escape as html_escape
-"""Batch approve/decline and drip management."""
+"""Batch approval and join request processing."""
 import logging
-import asyncio
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from telegram.error import BadRequest, RetryAfter
 from database.models import (
-    get_managed_channel, get_pending_requests, approve_join_request_db,
-    decline_join_request_db, update_channel_setting
+    get_managed_channel, add_managed_channel, update_channel_setting,
+    record_join_request, get_pending_requests, approve_request,
+    record_end_user, increment_channel_stat
 )
-from utils.keyboards import batch_kb, drip_kb, back_kb
+from utils.keyboards import back_kb
 from utils.helpers import format_number
 
 logger = logging.getLogger(__name__)
 
+
+async def process_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process incoming chat join requests."""
+    request = update.chat_join_request
+    chat = request.chat
+    user = request.from_user
+
+    logger.info(f"Join request: user={user.id} chat={chat.id} ({chat.title})")
+
+    # Get or create channel
+    channel = await get_managed_channel(chat.id)
+    if not channel:
+        # Auto-register channel
+        invite_link = request.invite_link
+        owner_id = invite_link.creator.id if invite_link and invite_link.creator else user.id
+        await add_managed_channel(
+            chat_id=chat.id,
+            chat_title=chat.title or "Unknown",
+            owner_id=owner_id,
+            chat_type=chat.type
+        )
+        channel = await get_managed_channel(chat.id)
+        logger.info(f"Auto-registered channel: {chat.id} ({chat.title})")
+
+    if not channel:
+        logger.error(f"Failed to get/create channel {chat.id}")
+        return
+
+    # Record the join request
+    await record_join_request(chat.id, user.id, user.username, user.first_name)
+    await record_end_user(user.id, user.username, user.first_name, user.language_code)
+    await increment_channel_stat(chat.id, "requests_received")
+
+    # Auto-approve if enabled
+    if channel.get("auto_approve", False):
+        try:
+            await context.bot.approve_chat_join_request(chat.id, user.id)
+            await approve_request(chat.id, user.id)
+            await increment_channel_stat(chat.id, "requests_approved")
+            logger.info(f"Auto-approved: user={user.id} chat={chat.id}")
+
+            # Send welcome DM if enabled
+            if channel.get("welcome_dm_enabled", False):
+                welcome_msg = channel.get("welcome_message", "")
+                if welcome_msg:
+                    try:
+                        welcome_msg = welcome_msg.replace("{first_name}", user.first_name or "")
+                        welcome_msg = welcome_msg.replace("{username}", f"@{user.username}" if user.username else "")
+                        welcome_msg = welcome_msg.replace("{channel_name}", chat.title or "")
+
+                        media_type = channel.get("welcome_media_type")
+                        media_file_id = channel.get("welcome_media_file_id")
+
+                        if media_type == "photo" and media_file_id:
+                            await context.bot.send_photo(user.id, media_file_id, caption=welcome_msg, parse_mode="HTML")
+                        elif media_type == "video" and media_file_id:
+                            await context.bot.send_video(user.id, media_file_id, caption=welcome_msg, parse_mode="HTML")
+                        else:
+                            await context.bot.send_message(user.id, welcome_msg, parse_mode="HTML")
+
+                        await increment_channel_stat(chat.id, "dms_sent")
+                    except Exception as e:
+                        logger.error(f"Failed to send welcome DM to {user.id}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to auto-approve {user.id} in {chat.id}: {e}")
+    else:
+        logger.info(f"Queued pending: user={user.id} chat={chat.id}")
+
+
 async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle batch approve and pending request callbacks."""
     query = update.callback_query
     data = query.data
-    user = update.effective_user
+    await query.answer()
 
     if data.startswith("ch_pending:"):
         chat_id = int(data.split(":")[1])
         channel = await get_managed_channel(chat_id)
-        if not channel: return
-        await query.answer()
-        pending = await get_pending_requests(chat_id, limit=100)
-        text = (f"📋 <b>Pending Requests</b>\n\n"
-                f"📢 {html_escape(channel.get('chat_title',''))}\n"
-                f"⏳ Pending: {len(pending)}\n\n")
+        if not channel:
+            await query.message.edit_text("Channel not found.", reply_markup=back_kb("my_channels"))
+            return
+        pending = await get_pending_requests(chat_id)
+        text = (f"📋 <b>Pending Requests</b>\n"
+                f"Channel: {channel.get('chat_title', '?')}\n\n")
+        if not pending:
+            text += "No pending requests! ✨"
+        else:
+            text += f"Total pending: {len(pending)}\n\n"
+            for p in pending[:20]:
+                name = p.get('first_name', 'Unknown')
+                uname = f"@{p['username']}" if p.get('username') else ''
+                text += f"• {name} {uname}\n"
+            if len(pending) > 20:
+                text += f"\n... and {len(pending) - 20} more"
+        kb = []
         if pending:
-            text += "Recent requests:\n"
-            for r in pending[:10]:
-                text += f"  • {html_escape(r.get('user_full_name','?'))} (ID: {r['user_id']})\n"
-            if len(pending) > 10:
-                text += f"  ... +{len(pending)-10} more\n"
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=batch_kb(chat_id))
+            kb.append([InlineKeyboardButton(f"✅ Approve All ({len(pending)})", callback_data=f"batch_approve:{chat_id}")])
+        kb.append([InlineKeyboardButton("« Back", callback_data=f"manage_ch:{chat_id}")])
+        await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
 
     elif data.startswith("batch_approve:"):
         chat_id = int(data.split(":")[1])
-        await query.answer("⏳ Approving...")
-        pending = await get_pending_requests(chat_id, limit=200)
+        pending = await get_pending_requests(chat_id)
         approved = 0
-        for req in pending:
+        failed = 0
+        for p in pending:
             try:
-                await context.bot.approve_chat_join_request(chat_id, req["user_id"])
-                await approve_join_request_db(req["user_id"], chat_id, "batch")
+                uid = p.get("user_id")
+                await context.bot.approve_chat_join_request(chat_id, uid)
+                await approve_request(chat_id, uid)
                 approved += 1
-            except BadRequest: await approve_join_request_db(req["user_id"], chat_id, "batch")
-            except RetryAfter as e: await asyncio.sleep(e.retry_after)
-            except Exception as e: logger.error(f"Approve error: {e}")
-            await asyncio.sleep(0.3)
-        await query.message.edit_text(f"✅ Batch approved {approved} users!", reply_markup=back_kb(f"manage_ch:{chat_id}"))
-
-    elif data.startswith("batch_decline:"):
-        chat_id = int(data.split(":")[1])
-        await query.answer("⏳ Declining...")
-        pending = await get_pending_requests(chat_id, limit=200)
-        declined = 0
-        for req in pending:
-            try:
-                await context.bot.decline_chat_join_request(chat_id, req["user_id"])
-                await decline_join_request_db(req["user_id"], chat_id)
-                declined += 1
-            except Exception: pass
-            await asyncio.sleep(0.3)
-        await query.message.edit_text(f"❌ Batch declined {declined} users.", reply_markup=back_kb(f"manage_ch:{chat_id}"))
-
-    elif data.startswith("drip_config:"):
-        chat_id = int(data.split(":")[1])
-        channel = await get_managed_channel(chat_id)
-        if not channel: return
-        await query.answer()
-        rate = channel.get("drip_rate", 50)
-        start_h = channel.get("drip_active_start", 8)
-        end_h = channel.get("drip_active_end", 23)
-        text = (f"💧 <b>Drip Approve Config</b>\n\n"
-                f"Rate: {rate} users per 5 min\n"
-                f"Active: {start_h}:00 - {end_h}:00\n\n"
-                f"Use /setdrip {chat_id} {{rate}} {{start_hour}} {{end_hour}}")
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=drip_kb(chat_id))
-
-    elif data.startswith("drip_start:"):
-        chat_id = int(data.split(":")[1])
-        await update_channel_setting(chat_id, drip_enabled=True)
-        await query.answer("💧 Drip approve enabled!", show_alert=True)
-        update.callback_query.data = f"drip_config:{chat_id}"
-        await handle_batch_callback(update, context)
+            except Exception as e:
+                failed += 1
+                logger.error(f"Batch approve failed for {uid}: {e}")
+        await increment_channel_stat(chat_id, "requests_approved", approved)
+        await query.message.edit_text(
+            f"✅ Batch approve complete!\n\n"
+            f"Approved: {approved}\nFailed: {failed}",
+            reply_markup=back_kb(f"manage_ch:{chat_id}")
+        )
