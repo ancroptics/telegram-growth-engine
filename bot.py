@@ -31,6 +31,15 @@ async def error_handler(update: object, context) -> None:
         except Exception:
             pass
 
+async def post_init(application):
+    """Run after bot init - create tables."""
+    try:
+        from database.init_tables import run_migrations
+        await run_migrations()
+        logger.info("Post-init migrations complete")
+    except Exception as e:
+        logger.error(f"Post-init error: {e}")
+
 def main():
     """Initialize and run the bot."""
     if not Config.validate():
@@ -45,7 +54,7 @@ def main():
     logger.info(f"Health server running on port {Config.PORT}")
 
     # Build application
-    app = Application.builder().token(Config.BOT_TOKEN).build()
+    app = Application.builder().token(Config.BOT_TOKEN).post_init(post_init).build()
 
     # --- Import handlers ---
     from handlers.start import start_command, help_command, dashboard_command
