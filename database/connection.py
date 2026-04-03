@@ -1,7 +1,8 @@
-"""Database connection — Supabase REST API or direct PostgreSQL."""
+"""Database connection \u2014 Supabase REST API or direct PostgreSQL."""
 import os
 import logging
 import json
+import time
 from typing import Any, Optional, List
 import httpx
 
@@ -11,14 +12,13 @@ SUPABASE_URL = ""
 SUPABASE_KEY = ""
 DATABASE_URL = ""
 HEADERS = {}
+_last_db_error_time = 0
 
 def init_db():
-    """Initialize DB connection from environment."""
     global SUPABASE_URL, SUPABASE_KEY, DATABASE_URL, HEADERS
     SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
     SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
     DATABASE_URL = os.environ.get("DATABASE_URL", "")
-    
     if SUPABASE_URL and SUPABASE_KEY:
         HEADERS = {
             "apikey": SUPABASE_KEY,
@@ -28,197 +28,177 @@ def init_db():
         }
         logger.info("Using Supabase REST API")
     elif DATABASE_URL:
-        host = DATABASE_URL.split("@")[1].split("/")[0] if "@" in DATABASE_URL else "unknown"
-        logger.info(f"Using direct PostgreSQL via DATABASE_URL (host: {host})")
+        logger.info("Using direct PostgreSQL via DATABASE_URL")
     else:
-        logger.error("No database configuration found!")
+        logger.warning("No database config \u2014 bot runs in degraded mode")
 
 def _use_rest():
     return bool(SUPABASE_URL and SUPABASE_KEY)
 
-# -- REST API methods --
-
 async def table_select(table, columns="*", filters=None, order=None, limit=None, single=False):
-    """SELECT from table."""
     if _use_rest():
-        url = f"{SUPABASE_URL}/rest/v1/{table}?select={columns}"
-        if filters:
-            for k, v in filters.items():
-                url += f"&{k}=eq.{v}"
-        if order:
-            url += f"&order={order}"
-        if limit:
-            url += f"&limit={limit}"
-        headers = {**HEADERS}
-        if single:
-            headers["Accept"] = "application/vnd.pgrst.object+json"
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code == 406 and single:
-                return None
-            if resp.status_code >= 400:
-                logger.error(f"Select error on {table}: {resp.status_code} {resp.text}")
-                return [] if not single else None
-            return resp.json()
-    else:
-        where = ""
-        args = []
+        try:
+            url = f"{SUPABASE_URL}/rest/v1/{table}?select={columns}"
+            if filters:
+                for k, v in filters.items():
+                    url += f"&{k}=eq.{v}"
+            if order:
+                url += f"&order={order}"
+            if limit:
+                url += f"&limit={limit}"
+            headers = {**HEADERS}
+            if single:
+                headers["Accept"] = "application/vnd.pgrst.object+json"
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 406 and single:
+                    return None
+                if resp.status_code >= 400:
+                    return [] if not single else None
+                return resp.json()
+        except Exception as e:
+            logger.error(f"REST select {table}: {e}")
+            return [] if not single else None
+    elif DATABASE_URL:
+        where, args = "", []
         if filters:
             clauses = [f"{k} = ${i+1}" for i, k in enumerate(filters.keys())]
             where = " WHERE " + " AND ".join(clauses)
             args = list(filters.values())
-        query = f"SELECT {columns} FROM {table}{where}"
+        q = f"SELECT {columns} FROM {table}{where}"
         if order:
-            query += f" ORDER BY {order.replace('.', ' ')}"
+            q += f" ORDER BY {order.replace('.', ' ')}"
         if limit:
-            query += f" LIMIT {limit}"
-        rows = await _pg_fetch(query, args)
-        if single:
-            return rows[0] if rows else None
-        return rows or []
+            q += f" LIMIT {limit}"
+        rows = await _pg_fetch(q, args)
+        return (rows[0] if rows else None) if single else (rows or [])
+    return [] if not single else None
 
 async def table_insert(table, data, upsert=False):
-    """INSERT into table."""
     if _use_rest():
-        url = f"{SUPABASE_URL}/rest/v1/{table}"
-        headers = {**HEADERS}
-        if upsert:
-            headers["Prefer"] = "resolution=merge-duplicates,return=representation"
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, headers=headers, json=data)
-            if resp.status_code >= 400:
-                logger.error(f"Insert error on {table}: {resp.status_code} {resp.text}")
-                return None
-            try:
+        try:
+            url = f"{SUPABASE_URL}/rest/v1/{table}"
+            headers = {**HEADERS}
+            if upsert:
+                headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(url, headers=headers, json=data)
+                if resp.status_code >= 400:
+                    return None
                 result = resp.json()
                 return result[0] if isinstance(result, list) and result else result
-            except Exception:
-                return None
-    else:
+        except Exception:
+            return None
+    elif DATABASE_URL:
         cols = list(data.keys())
         vals = list(data.values())
-        placeholders = [f"${i+1}" for i in range(len(cols))]
+        ph = [f"${i+1}" for i in range(len(cols))]
         conflict = " ON CONFLICT DO NOTHING" if upsert else ""
-        query = f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(placeholders)}){conflict} RETURNING *"
-        rows = await _pg_fetch(query, vals)
+        q = f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(ph)}){conflict} RETURNING *"
+        rows = await _pg_fetch(q, vals)
         return rows[0] if rows else None
-
-async def table_update(table, data, filters):
-    """UPDATE table."""
-    if _use_rest():
-        url = f"{SUPABASE_URL}/rest/v1/{table}?"
-        params = [f"{k}=eq.{v}" for k, v in filters.items()]
-        url += "&".join(params)
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.patch(url, headers=HEADERS, json=data)
-            if resp.status_code >= 400:
-                logger.error(f"Update error on {table}: {resp.status_code} {resp.text}")
-                return None
-            try:
-                result = resp.json()
-                return result[0] if isinstance(result, list) and result else result
-            except Exception:
-                return None
-    else:
-        set_clauses = [f"{k} = ${i+1}" for i, k in enumerate(data.keys())]
-        offset = len(data)
-        where_clauses = [f"{k} = ${i+offset+1}" for i, k in enumerate(filters.keys())]
-        query = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)} RETURNING *"
-        args = list(data.values()) + list(filters.values())
-        rows = await _pg_fetch(query, args)
-        return rows[0] if rows else None
-
-async def table_delete(table, filters):
-    """DELETE from table."""
-    if _use_rest():
-        url = f"{SUPABASE_URL}/rest/v1/{table}?"
-        params = [f"{k}=eq.{v}" for k, v in filters.items()]
-        url += "&".join(params)
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.delete(url, headers=HEADERS)
-            if resp.status_code >= 400:
-                logger.error(f"Delete error on {table}: {resp.status_code} {resp.text}")
-                return False
-            return True
-    else:
-        clauses = [f"{k} = ${i+1}" for i, k in enumerate(filters.keys())]        
-        query = f"DELETE FROM {table} WHERE {' AND '.join(clauses)}"
-        await _pg_execute(query, list(filters.values()))
-        return True
-
-async def rpc(function_name, params=None):
-    """Call RPC function."""
-    if _use_rest():
-        url = f"{SUPABASE_URL}/rest/v1/rpc/{function_name}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, headers=HEADERS, json=params or {})
-            if resp.status_code >= 400:
-                logger.error(f"RPC error {function_name}: {resp.status_code} {resp.text}")
-                return None
-            try:
-                return resp.json()
-            except Exception:
-                return resp.text
     return None
 
-# -- Direct PostgreSQL via asyncpg --
+async def table_update(table, data, filters):
+    if _use_rest():
+        try:
+            url = f"{SUPABASE_URL}/rest/v1/{table}?"
+            url += "&".join(f"{k}=eq.{v}" for k, v in filters.items())
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.patch(url, headers=HEADERS, json=data)
+                if resp.status_code >= 400:
+                    return None
+                result = resp.json()
+                return result[0] if isinstance(result, list) and result else result
+        except Exception:
+            return None
+    elif DATABASE_URL:
+        sc = [f"{k} = ${i+1}" for i, k in enumerate(data.keys())]
+        off = len(data)
+        wc = [f"{k} = ${i+off+1}" for i, k in enumerate(filters.keys())]
+        q = f"UPDATE {table} SET {', '.join(sc)} WHERE {' AND '.join(wc)} RETURNING *"
+        rows = await _pg_fetch(q, list(data.values()) + list(filters.values()))
+        return rows[0] if rows else None
+    return None
 
+async def table_delete(table, filters):
+    if _use_rest():
+        try:
+            url = f"{SUPABASE_URL}/rest/v1/{table}?"
+            url += "&".join(f"{k}=eq.{v}" for k, v in filters.items())
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.delete(url, headers=HEADERS)
+                return resp.status_code < 400
+        except Exception:
+            return False
+    elif DATABASE_URL:
+        clauses = [f"{k} = ${i+1}" for i, k in enumerate(filters.keys())]
+        await _pg_execute(f"DELETE FROM {table} WHERE {' AND '.join(clauses)}", list(filters.values()))
+        return True
+    return False
+
+async def rpc(function_name, params=None):
+    if _use_rest():
+        try:
+            url = f"{SUPABASE_URL}/rest/v1/rpc/{function_name}"
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(url, headers=HEADERS, json=params or {})
+                if resp.status_code >= 400:
+                    return None
+                return resp.json()
+        except Exception:
+            return None
+    return None
+
+# -- PostgreSQL via asyncpg --
 _pool = None
+_pool_failed = False
 
 async def _get_pool():
-    global _pool
+    global _pool, _pool_failed, _last_db_error_time
+    if _pool_failed and time.time() - _last_db_error_time < 60:
+        return None
     if _pool is None:
-        import asyncpg
-        import ssl
+        import asyncpg, ssl
         from urllib.parse import urlparse, unquote
-        
-        ssl_ctx = ssl.create_default_context()
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl.CERT_NONE
-        
-        # Parse DATABASE_URL manually to handle dots in username
-        parsed = urlparse(DATABASE_URL)
-        user = unquote(parsed.username or "")
-        password = unquote(parsed.password or "")
-        host = parsed.hostname or ""
-        port = parsed.port or 5432
-        database = (parsed.path or "/postgres").lstrip("/")
-        
-        logger.info(f"Connecting to PG: user={user}, host={host}, port={port}, db={database}")
-        
+        _pool_failed = False
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        p = urlparse(DATABASE_URL)
         try:
             _pool = await asyncpg.create_pool(
-                user=user,
-                password=password,
-                host=host,
-                port=port,
-                database=database,
-                min_size=1,
-                max_size=3,
-                ssl=ssl_ctx,
-                command_timeout=30,
-                statement_cache_size=0,  # Required for transaction pooler
+                user=unquote(p.username or ""), password=unquote(p.password or ""),
+                host=p.hostname, port=p.port or 5432,
+                database=(p.path or "/postgres").lstrip("/"),
+                min_size=1, max_size=3, ssl=ctx,
+                command_timeout=30, statement_cache_size=0,
             )
-            logger.info("PostgreSQL pool created successfully")
+            logger.info("PG pool created")
         except Exception as e:
-            logger.error(f"Failed to create PG pool: {e}")
-            raise
+            logger.error(f"PG pool failed: {e}")
+            _pool_failed = True
+            _last_db_error_time = time.time()
+            return None
     return _pool
 
 async def _pg_fetch(query, args=None):
     try:
         pool = await _get_pool()
+        if not pool:
+            return []
         async with pool.acquire() as conn:
-            rows = await conn.fetch(query, *(args or []))
-            return [dict(r) for r in rows]
+            return [dict(r) for r in await conn.fetch(query, *(args or []))]
     except Exception as e:
-        logger.error(f"PG fetch error: {e}")
+        logger.error(f"PG fetch: {e}")
         return []
 
 async def _pg_execute(query, args=None):
     try:
         pool = await _get_pool()
+        if not pool:
+            return
         async with pool.acquire() as conn:
             await conn.execute(query, *(args or []))
     except Exception as e:
-        logger.error(f"PG execute error: {e}")
+        logger.error(f"PG exec: {e}")
