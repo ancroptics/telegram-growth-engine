@@ -15,16 +15,16 @@ async def handle_channel_callback(update: Update, context: ContextTypes.DEFAULT_
     if data in ("my_channels", "add_channel"):
         channels = await get_owner_channels(user_id)
         if not channels:
-            await query.message.edit_text("\ud83d\udcca <b>My Channels</b>\n\nNo channels yet! Add me as admin to a channel.",
+            await query.message.edit_text("\U0001f4ca <b>My Channels</b>\n\nNo channels yet! Add me as admin to a channel.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]]))
             return
         buttons = []
         for ch in channels:
             title = html_escape(ch.get("chat_title", "?"))[:30]
-            buttons.append([InlineKeyboardButton(f"\ud83d\udce2 {title}", callback_data=f"manage_ch:{ch['chat_id']}")] )
+            buttons.append([InlineKeyboardButton(f"\U0001f4e2 {title}", callback_data=f"manage_ch:{ch['chat_id']}")] )
         buttons.append([InlineKeyboardButton("\u00ab Back", callback_data="main_menu")])
-        await query.message.edit_text("\ud83d\udcca <b>Your Channels</b>\nSelect one to manage:", parse_mode="HTML",
+        await query.message.edit_text("\U0001f4ca <b>Your Channels</b>\nSelect one to manage:", parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("manage_ch:"):
         chat_id = int(data.split(":")[1])
@@ -42,12 +42,12 @@ async def handle_channel_callback(update: Update, context: ContextTypes.DEFAULT_
             f"Auto Approve: {auto}\nDrip Mode: {drip}\nWelcome DM: {welcome}\nForce Subscribe: {fsub}\n"
             f"Members: {ch.get('member_count', 0)} | Approved: {ch.get('total_approved', 0)}")
         buttons = [
-            [InlineKeyboardButton(f"{'\ud83d\udd34' if ch.get('auto_approve') else '\ud83d\udfe2'} Toggle Auto-Approve", callback_data=f"ch_toggle:auto_approve:{chat_id}")],
-            [InlineKeyboardButton("\ud83d\udcac Edit Welcome", callback_data=f"ch_edit_welcome:{chat_id}"),
-             InlineKeyboardButton("\ud83d\udd12 Force Sub", callback_data=f"ch_force_sub:{chat_id}")],
-            [InlineKeyboardButton("\ud83d\udcca Analytics", callback_data=f"ch_analytics:{chat_id}"),
-             InlineKeyboardButton("\ud83d\udc65 Pending", callback_data=f"ch_pending:{chat_id}")],
-            [InlineKeyboardButton("\ud83d\uddd1 Remove", callback_data=f"ch_delete:{chat_id}")],
+            [InlineKeyboardButton(f"{'\U0001f534' if ch.get('auto_approve') else '\U0001f7e2'} Toggle Auto-Approve", callback_data=f"ch_toggle:auto_approve:{chat_id}")],
+            [InlineKeyboardButton("\U0001f4ac Edit Welcome", callback_data=f"ch_edit_welcome:{chat_id}"),
+             InlineKeyboardButton("\U0001f512 Force Sub", callback_data=f"ch_force_sub:{chat_id}")],
+            [InlineKeyboardButton("\U0001f4ca Analytics", callback_data=f"ch_analytics:{chat_id}"),
+             InlineKeyboardButton("\U0001f465 Pending", callback_data=f"ch_pending:{chat_id}")],
+            [InlineKeyboardButton("\U0001f5d1 Remove", callback_data=f"ch_delete:{chat_id}")],
             [InlineKeyboardButton("\u00ab Back", callback_data="my_channels")],
         ]
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
