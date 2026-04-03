@@ -33,13 +33,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"\u2b07\ufe0f <b>Quick Start:</b> Add this bot as admin to your channel.")
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu_kb(is_admin=user.id in Config.SUPERADMIN_IDS))
     except Exception as e:
-        logger.error(f"Start command error: {e}")
+        logger.error(f"Start command error: {e}", exc_info=True)
+        from utils.keyboards import main_menu_kb
         text = (f"\U0001f680 <b>TELEGRAM GROWTH ENGINE v3.1</b>\n\n"
                 f"Welcome, {user.first_name}!\n\n"
                 f"\u26a0\ufe0f Database is currently unavailable. "
                 f"Some features may not work.\n\n"
                 f"Please try again later or contact support.")
-        await update.message.reply_text(text, parse_mode="HTML")
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu_kb(is_admin=user.id in Config.SUPERADMIN_IDS))
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -61,14 +62,31 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"\U0001f3c6 Tier: {TIER_EMOJI.get(tier, '')} {tier.capitalize()}")
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=main_menu_kb(is_admin=user.id in Config.SUPERADMIN_IDS))
     except Exception as e:
-        logger.error(f"Main menu error: {e}")
-        await query.message.edit_text("\u26a0\ufe0f Database unavailable. Try again later.", parse_mode="HTML")
+        logger.error(f"Main menu error: {e}", exc_info=True)
+        from utils.keyboards import main_menu_kb
+        await query.message.edit_text("\u26a0\ufe0f Database unavailable. Try again later.", parse_mode="HTML", reply_markup=main_menu_kb(is_admin=user.id in Config.SUPERADMIN_IDS))
+
+async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show support info."""
+    query = update.callback_query
+    await query.answer()
+    from utils.keyboards import back_kb
+    text = ("\U0001f4ac <b>Support</b>\n\n"
+            "Need help? Here\'s how to get support:\n\n"
+            "\U0001f4e7 Contact: @ancroptics\n"
+            "\U0001f4d6 Use /help for setup guide\n"
+            "\U0001f41b Report bugs to the admin\n\n"
+            "<b>Common Issues:</b>\n"
+            "\u2022 Bot not approving? Make sure it\'s admin with \'Invite Users\' permission\n"
+            "\u2022 No welcome DM? User must have started the bot first\n"
+            "\u2022 Force sub not working? Check channel usernames are set")
+    await query.message.edit_text(text, parse_mode="HTML", reply_markup=back_kb())
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = ("\U0001f4d6 <b>HELP</b>\n\n"
             "<b>Setup:</b>\n"
             "1. Add bot as admin to your channel\n"
-            "2. Enable 'Approve New Members' in channel settings\n"
+            "2. Enable \'Approve New Members\' in channel settings\n"
             "3. The bot handles the rest!\n\n"
             "<b>Commands:</b>\n"
             "/start - Main menu\n"
@@ -81,7 +99,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/broadcast - Send to all users\n"
             "/newtemplate - Create DM template\n"
             "/autopost - Set up auto-poster\n"
-            "/setdrip {id} {rate} {start} {end}")
+            "/setdrip {id} {rate} {start} {end}\n"
+            "/clone {bot_token} - Clone bot")
     await update.message.reply_text(text, parse_mode="HTML")
 
 async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
