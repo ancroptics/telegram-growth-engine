@@ -1,31 +1,24 @@
-# 🚀 Telegram Growth Engine Bot
+# Telegram Growth Engine
 
-A comprehensive Telegram bot for channel growth management — auto-approve join requests, welcome DMs, broadcast, referral system, analytics, bot cloning, cross-promotion, and more.
+Multi-tenant Telegram bot for channel growth management.
 
 ## Features
-- ✅ Auto-Approve Join Requests (instant/drip/manual)
-- 💬 Welcome DMs with media & variables
-- 📊 Analytics Dashboard
-- 📢 Broadcast System with segmentation
-- 🔗 Dual-layer Referral System
-- 🔒 Force Subscribe
-- 🕐 Drip Approve
-- 🔄 Cross-Promotion
-- 🤖 Auto-Poster
-- 📝 Templates
-- 🌐 Multi-Language Welcome
-- 🧬 Bot Cloning (white-label)
-- 💎 Premium Tiers (Free/Premium/Business)
-- 👑 Superadmin Panel
+- Auto-approve join requests (instant / drip)
+- Welcome DMs with multi-language support
+- Force-subscribe to other channels
+- Broadcast messaging
+- Cross-promotion listings
+- Analytics & stats dashboard
+- Clone bot support
+- Premium tiers
 
 ## Setup
-1. Clone repo
-2. Copy `.env.example` to `.env` and fill in values
+1. Copy `.env.example` to `.env` and fill values
+2. Run migrations against your Supabase DB
 3. `pip install -r requirements.txt`
-4. Run DB migration: `database/migrations/001_initial_schema.sql`
-5. `python bot.py`
+4. `python bot.py`
 
-## Deploy on Render
-1. Connect this repo
-2. Set env vars (BOT_TOKEN, DATABASE_URL, SUPERADMIN_IDS)
-3. Deploy — bot starts with health server automatically
+## Deploy to Render
+- Push to GitHub, connect repo in Render
+- Set env vars in Render dashboard (never in render.yaml)
+- Uses Docker runtime
