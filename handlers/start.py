@@ -81,7 +81,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/broadcast - Send to all users\n"
             "/newtemplate - Create DM template\n"
             "/autopost - Set up auto-poster\n"
-            "/setdrip <id> <rate> <start> <end>")
+            "/setdrip {id} {rate} {start} {end}")
     await update.message.reply_text(text, parse_mode="HTML")
 
 async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
