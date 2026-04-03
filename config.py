@@ -1,31 +1,65 @@
-"""Application configuration from environment variables."""
+"""Configuration for the Telegram Growth Engine bot."""
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 
 class Config:
-    BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-    BOT_USERNAME = os.getenv("BOT_USERNAME", "Botofall_robot")
-    DATABASE_URL = os.getenv("DATABASE_URL", "")
-    ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
-    SUPERADMIN_IDS = [int(x.strip()) for x in os.getenv("SUPERADMIN_IDS", "").split(",") if x.strip().isdigit()]
-    PORT = int(os.getenv("PORT", "10000"))
-    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-    RATE_LIMIT = int(os.getenv("RATE_LIMIT", "30"))
-    RATE_WINDOW = int(os.getenv("RATE_WINDOW", "60"))
-    PREMIUM_ENABLED = os.getenv("PREMIUM_ENABLED", "false").lower() == "true"
-    PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
-    PREMIUM_PRICE_MONTHLY = int(os.getenv("PREMIUM_PRICE_MONTHLY", "199"))
-    BUSINESS_PRICE_MONTHLY = int(os.getenv("BUSINESS_PRICE_MONTHLY", "499"))
-    MAX_CHANNELS_FREE = int(os.getenv("MAX_CHANNELS_FREE", "3"))
-    MAX_CHANNELS_PREMIUM = int(os.getenv("MAX_CHANNELS_PREMIUM", "20"))
-    DRIP_INTERVAL_HOURS = int(os.getenv("DRIP_INTERVAL_HOURS", "24"))
-    CLONE_ENABLED = os.getenv("CLONE_ENABLED", "true").lower() == "true"
+    """Bot configuration from environment variables."""
+    # Telegram
+    BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+    BOT_USERNAME = os.environ.get("BOT_USERNAME", "")
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+    WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "tge_secret_token_2024")
+    WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH", "/webhook")
+
+    # Supabase
+    SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+    SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+
+    # Admin IDs
+    ADMIN_IDS = []
+    SUPERADMIN_IDS = []
+
+    _raw_admins = os.environ.get("ADMIN_IDS", "")
+    _raw_superadmins = os.environ.get("SUPERADMIN_IDS", "")
+    if _raw_admins:
+        try:
+            ADMIN_IDS = [int(x.strip()) for x in _raw_admins.split(",") if x.strip()]
+        except ValueError:
+            logger.warning(f"Invalid ADMIN_IDS: {_raw_admins}")
+    if _raw_superadmins:
+        try:
+            SUPERADMIN_IDS = [int(x.strip()) for x in _raw_superadmins.split(",") if x.strip()]
+        except ValueError:
+            logger.warning(f"Invalid SUPERADMIN_IDS: {_raw_superadmins}")
+
+    # Server
+    PORT = int(os.environ.get("PORT", "10000"))
+    HOST = os.environ.get("HOST", "0.0.0.0")
+    HEALTH_CHECK_PATH = os.environ.get("HEALTH_CHECK_PATH", "/health")
+
+    # Features
+    DEFAULT_TIER = os.environ.get("DEFAULT_TIER", "free")
+    MAX_CHANNELS_FREE = int(os.environ.get("MAX_CHANNELS_FREE", "3"))
+    MAX_CHANNELS_PREMIUM = int(os.environ.get("MAX_CHANNELS_PREMIUM", "10"))
+    MAX_CHANNELS_BUSINESS = int(os.environ.get("MAX_CHANNELS_BUSINESS", "50"))
 
     @classmethod
-    def validate(cls):
+    def validate(cls) -> bool:
+        """Validate required config."""
+        missing = []
         if not cls.BOT_TOKEN:
-            raise ValueError("BOT_TOKEN is required")
+            missing.append("BOT_TOKEN")
+        if not cls.SUPABASE_URL:
+            missing.append("SUPABASE_URL")
+        if not cls.SUPABASE_SERVICE_KEY:
+            missing.append("SUPABASE_SERVICE_KEY")
+        if missing:
+            logger.error(f"Missing required env vars: {', '.join(missing)}")
+            return False
         return True
