@@ -1,5 +1,5 @@
 """Database models — async helpers for Supabase REST API.
-Maps to the ACTUAL database schema in Supabase.
+Maps to the ACTUAL database schema.
 """
 import logging
 from typing import Optional
@@ -65,6 +65,10 @@ async def update_channel_setting(chat_id: int, key: str, value):
 async def delete_managed_channel(chat_id: int):
     await table_delete("managed_channels", {"chat_id": chat_id})
 
+async def remove_managed_channel(chat_id: int):
+    """Alias for delete_managed_channel."""
+    await delete_managed_channel(chat_id)
+
 
 # ═══ END USERS ═══
 async def get_or_create_end_user(user_id: int, username: str = None, first_name: str = None,
@@ -83,14 +87,30 @@ async def get_or_create_end_user(user_id: int, username: str = None, first_name:
         logger.error(f"get_or_create_end_user failed: {e}")
         return {"user_id": user_id}
 
+async def mark_user_blocked(user_id: int):
+    """Mark user as having blocked the bot."""
+    await table_update("end_users", {"has_blocked_bot": True}, {"user_id": user_id})
+
 
 # ═══ JOIN REQUESTS ═══
-async def record_join_request(user_id: int, chat_id: int, username: str = None, first_name: str = None):
+async def log_join_request(user_id: int, chat_id: int, username: str = None, first_name: str = None, language: str = None):
+    """Log a new join request."""
     return await table_insert("join_requests", {
         "user_id": user_id, "chat_id": chat_id,
         "username": username or "", "first_name": first_name or "",
+        "user_language": language or "en",
         "status": "pending",
     })
+
+async def record_join_request(user_id: int, chat_id: int, username: str = None, first_name: str = None):
+    return await log_join_request(user_id, chat_id, username, first_name)
+
+async def approve_join_request_db(request_id: int = None, user_id: int = None, chat_id: int = None):
+    """Mark join request as approved."""
+    if request_id:
+        await table_update("join_requests", {"status": "approved", "processed_at": "now()"}, {"id": request_id})
+    elif user_id and chat_id:
+        await table_update("join_requests", {"status": "approved"}, {"user_id": user_id, "chat_id": chat_id, "status": "pending"})
 
 async def get_pending_requests(chat_id: int, limit: int = 50) -> list:
     return await table_select("join_requests", filters={"chat_id": chat_id, "status": "pending"}, limit=limit) or []
@@ -99,38 +119,38 @@ async def update_join_request(request_id: int, **kwargs):
     await table_update("join_requests", kwargs, {"id": request_id})
 
 
-# ═══ WELCOME MESSAGES (stored in managed_channels) ═══
-async def get_welcome_message(chat_id: int) -> Optional[dict]:
-    ch = await get_managed_channel(chat_id)
-    if ch and ch.get("welcome_dm_enabled"):
-        return {
-            "chat_id": chat_id,
-            "message_text": ch.get("welcome_message", "Welcome!"),
-            "parse_mode": ch.get("welcome_parse_mode", "HTML"),
-            "enabled": ch.get("welcome_dm_enabled", False),
-            "media_type": ch.get("welcome_media_type"),
-            "media_file_id": ch.get("welcome_media_file_id"),
-        }
-    return None
+# ═══ CHANNEL STATS ═══
+async def update_channel_stats(chat_id: int, **kwargs):
+    """Update channel stats — increment counters."""
+    import datetime
+    today = datetime.date.today().isoformat()
+    existing = await table_select("channel_stats", filters={"chat_id": chat_id, "date": today}, single=True)
+    if existing:
+        updates = {}
+        for k, v in kwargs.items():
+            updates[k] = existing.get(k, 0) + v if isinstance(v, int) else v
+        await table_update("channel_stats", updates, {"id": existing["id"]})
+    else:
+        await table_insert("channel_stats", {"chat_id": chat_id, "date": today, **kwargs})
 
-async def set_welcome_message(chat_id: int, message_text: str, parse_mode: str = "HTML"):
-    await table_update("managed_channels", {
-        "welcome_dm_enabled": True,
-        "welcome_message": message_text,
-        "welcome_parse_mode": parse_mode,
-    }, {"chat_id": chat_id})
+async def get_channel_stats(chat_id: int) -> dict:
+    rows = await table_select("channel_stats", filters={"chat_id": chat_id}, order="date.desc", limit=1)
+    return rows[0] if rows else {}
 
 
-# ═══ FORCE SUBSCRIBE (stored in managed_channels.force_subscribe_channels jsonb) ═══
-async def get_force_sub_rules(chat_id: int) -> list:
+# ═══ FORCE SUBSCRIBE ═══
+async def get_force_sub_channels(chat_id: int) -> list:
+    """Get force subscribe channels from managed_channels.force_subscribe_channels."""
     ch = await get_managed_channel(chat_id)
     if ch and ch.get("force_subscribe_enabled") and ch.get("force_subscribe_channels"):
         channels = ch["force_subscribe_channels"]
-        if isinstance(channels, list):
-            return [{"target_chat_id": chat_id, "required_chat_id": c.get("chat_id"), "required_chat_title": c.get("title", "")} for c in channels]
+        if isinstance(channels, str):
+            import json
+            channels = json.loads(channels) if channels else []
+        return channels if isinstance(channels, list) else []
     return []
 
-async def add_force_sub_rule(target_chat_id: int, required_chat_id: int, required_chat_title: str = ""):
+async def add_force_sub_channel(target_chat_id: int, required_chat_id: int, title: str = ""):
     ch = await get_managed_channel(target_chat_id)
     if not ch:
         return
@@ -138,21 +158,36 @@ async def add_force_sub_rule(target_chat_id: int, required_chat_id: int, require
     if isinstance(channels, str):
         import json
         channels = json.loads(channels) if channels else []
-    channels.append({"chat_id": required_chat_id, "title": required_chat_title})
+    channels.append({"chat_id": required_chat_id, "title": title})
     await table_update("managed_channels", {
         "force_subscribe_enabled": True,
         "force_subscribe_channels": channels,
     }, {"chat_id": target_chat_id})
+
+async def remove_force_sub_channel(target_chat_id: int, required_chat_id: int):
+    ch = await get_managed_channel(target_chat_id)
+    if not ch:
+        return
+    channels = ch.get("force_subscribe_channels") or []
+    if isinstance(channels, str):
+        import json
+        channels = json.loads(channels) if channels else []
+    channels = [c for c in channels if c.get("chat_id") != required_chat_id]
+    await table_update("managed_channels", {
+        "force_subscribe_channels": channels,
+        "force_subscribe_enabled": bool(channels),
+    }, {"chat_id": target_chat_id})
+
+async def mark_force_sub_completed(user_id: int, chat_id: int):
+    """Mark force subscribe as completed for a join request."""
+    await table_update("join_requests", {"force_sub_completed": True}, {"user_id": user_id, "chat_id": chat_id, "status": "pending"})
 
 
 # ═══ TEMPLATES ═══
 async def get_templates(owner_id: int) -> list:
     return await table_select("templates", filters={"owner_id": owner_id}) or []
 
-async def get_template(template_id: int) -> Optional[dict]:
-    return await table_select("templates", filters={"template_id": template_id}, single=True)
-
-async def create_template(owner_id: int, name: str, content: str, content_type: str = "text"):
+async def save_template(owner_id: int, name: str, content: str, content_type: str = "text"):
     return await table_insert("templates", {
         "owner_id": owner_id, "name": name, "content": content, "content_type": content_type,
     })
@@ -162,63 +197,62 @@ async def delete_template(template_id: int):
 
 
 # ═══ AUTO POSTS ═══
-async def get_auto_posts(owner_id: int = None) -> list:
-    filters = {"owner_id": owner_id} if owner_id else {}
-    return await table_select("auto_post_schedules", filters=filters) or []
+async def get_auto_post_groups(owner_id: int) -> list:
+    return await table_select("auto_post_groups", filters={"owner_id": owner_id}) or []
 
-async def get_active_auto_posts() -> list:
-    return await table_select("auto_post_schedules", filters={"is_active": True}) or []
-
-async def create_auto_post(owner_id: int, chat_id: int, content: str, interval_minutes: int = 60):
+async def create_auto_post_schedule(owner_id: int, chat_id: int, content: str, interval_minutes: int = 60):
     return await table_insert("auto_post_schedules", {
         "owner_id": owner_id, "group_chat_id": chat_id,
         "content": content, "interval_minutes": interval_minutes,
         "is_active": True, "content_type": "text",
     })
 
+async def get_active_auto_posts() -> list:
+    return await table_select("auto_post_schedules", filters={"is_active": True}) or []
+
 
 # ═══ BROADCASTS ═══
-async def get_scheduled_broadcasts(owner_id: int = None, pending_only: bool = False) -> list:
-    filters = {}
-    if owner_id:
-        filters["owner_id"] = owner_id
-    if pending_only:
-        filters["status"] = "pending"
-    return await table_select("broadcasts", filters=filters) or []
-
-async def create_broadcast(owner_id: int, chat_id: int, content: str, scheduled_at: str = None):
+async def create_broadcast(owner_id: int, channel_id: int, content: str, content_type: str = "text", scheduled_at: str = None):
     data = {
-        "owner_id": owner_id, "channel_id": chat_id,
-        "content": content, "content_type": "text",
+        "owner_id": owner_id, "channel_id": channel_id,
+        "content": content, "content_type": content_type,
         "status": "pending",
     }
     if scheduled_at:
         data["scheduled_at"] = scheduled_at
-    return await table_insert("broadcasts", data)
+    result = await table_insert("broadcasts", data)
+    return result[0] if isinstance(result, list) and result else data
 
-async def update_broadcast(broadcast_id: int, **kwargs):
+async def get_broadcast_by_id(broadcast_id: int) -> Optional[dict]:
+    return await table_select("broadcasts", filters={"broadcast_id": broadcast_id}, single=True)
+
+async def get_broadcast_recipients(broadcast_id: int) -> list:
+    """Get all end_user IDs for broadcast target channel."""
+    bc = await get_broadcast_by_id(broadcast_id)
+    if not bc:
+        return []
+    return await get_all_user_ids()
+
+async def update_broadcast_progress(broadcast_id: int, **kwargs):
     await table_update("broadcasts", kwargs, {"broadcast_id": broadcast_id})
 
+async def get_pending_broadcasts() -> list:
+    return await table_select("broadcasts", filters={"status": "pending"}) or []
 
-# ═══ DRIP CAMPAIGNS (stored in managed_channels) ═══
-async def get_drip_config(chat_id: int) -> Optional[dict]:
-    ch = await get_managed_channel(chat_id)
-    if ch:
+
+# ═══ REFERRAL STATS ═══
+async def get_referral_stats(user_id: int) -> dict:
+    owner = await get_owner(user_id)
+    if owner:
         return {
-            "chat_id": chat_id,
-            "drip_rate": ch.get("drip_rate", 0),
-            "drip_interval": ch.get("drip_interval", 60),
-            "enabled": bool(ch.get("drip_rate")),
+            "referral_code": owner.get("referral_code", ""),
+            "referral_count": owner.get("referral_count", 0),
+            "referral_earnings": owner.get("referral_earnings", 0),
         }
-    return None
-
-async def set_drip_config(chat_id: int, rate: int, interval: int = 60):
-    await table_update("managed_channels", {
-        "drip_rate": rate, "drip_interval": interval,
-    }, {"chat_id": chat_id})
+    return {"referral_code": "", "referral_count": 0, "referral_earnings": 0}
 
 
-# ═══ BOT SETTINGS (platform_settings) ═══
+# ═══ SETTINGS ═══
 async def get_setting(key: str) -> Optional[str]:
     row = await table_select("platform_settings", filters={"key": key}, single=True)
     return row.get("value") if row else None
@@ -226,20 +260,18 @@ async def get_setting(key: str) -> Optional[str]:
 async def set_setting(key: str, value: str):
     await table_insert("platform_settings", {"key": key, "value": value}, upsert=True)
 
+async def get_all_settings() -> list:
+    return await table_select("platform_settings") or []
 
-# ═══ ANALYTICS / STATS ═══
+
+# ═══ GLOBAL STATS ═══
+async def get_global_stats() -> dict:
+    owners = await table_count("channel_owners")
+    channels = await table_count("managed_channels")
+    users = await table_count("end_users")
+    return {"total_owners": owners, "total_channels": channels, "total_users": users}
+
+
+# ═══ INTERACTIONS ═══
 async def log_interaction(user_id: int, action: str):
     await table_insert("interactions", {"user_id": user_id, "action": action})
-
-async def get_channel_stats(chat_id: int) -> dict:
-    rows = await table_select("channel_stats", filters={"chat_id": chat_id}, order="date.desc", limit=1)
-    return rows[0] if rows else {}
-
-async def get_owner_stats(owner_id: int) -> dict:
-    """Get aggregated stats for an owner."""
-    channels = await get_owner_channels(owner_id)
-    total_members = sum(c.get("member_count", 0) for c in channels)
-    return {
-        "total_channels": len(channels),
-        "total_members": total_members,
-    }
