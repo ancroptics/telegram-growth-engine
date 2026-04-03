@@ -1,6 +1,5 @@
 """Telegram Growth Engine - Main bot entry point."""
 import logging
-import asyncio
 import os
 from telegram import Update
 from telegram.ext import (
@@ -32,13 +31,11 @@ def main():
     init_db()
     logger.info("Database initialized")
 
-    port = int(os.getenv("PORT", "10000"))
-    start_health_server(port)
-    logger.info(f"Health server running on port {port}")
+    start_health_server()
+    logger.info("Health server started")
 
     app = Application.builder().token(Config.BOT_TOKEN).build()
 
-    # Commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("dashboard", dashboard_command))
@@ -49,25 +46,17 @@ def main():
     app.add_handler(CommandHandler("unban", admin_unban_command))
     app.add_handler(CommandHandler("settier", admin_set_tier_command))
 
-    # Chat member updates
     app.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
-
-    # Join requests
     app.add_handler(ChatJoinRequestHandler(join_request_handler))
-
-    # All callback queries
     app.add_handler(CallbackQueryHandler(callback_router))
 
-    # Text messages for stateful flows (private chat only)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
         handle_text_message
     ))
 
-    # Scheduler
     setup_scheduler(app)
 
-    # Post-init
     async def post_init(application):
         await run_migrations()
         logger.info("Post-init migrations complete")
@@ -79,13 +68,10 @@ def main():
 
 
 async def handle_text_message(update: Update, context):
-    """Route text messages based on user state."""
     if not update.message or not update.message.text:
         return
-
     ud = context.user_data
     state = ud.get("state")
-
     if state == "awaiting_broadcast_message" or ud.get("bc_setup"):
         from handlers.broadcast import broadcast_message_handler
         await broadcast_message_handler(update, context)
