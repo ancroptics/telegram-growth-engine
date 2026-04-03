@@ -275,3 +275,29 @@ async def get_global_stats() -> dict:
 # ═══ INTERACTIONS ═══
 async def log_interaction(user_id: int, action: str):
     await table_insert("interactions", {"user_id": user_id, "action": action})
+
+
+# ═══ SCHEDULER HELPERS ═══
+async def get_due_auto_posts() -> list:
+    """Get auto posts that are due to be sent."""
+    import datetime
+    now = datetime.datetime.utcnow().isoformat()
+    # Get active posts where next_run_at <= now or next_run_at is null
+    posts = await table_select("auto_post_schedules", filters={"is_active": True})
+    due = []
+    for p in (posts or []):
+        next_run = p.get("next_run_at")
+        if not next_run or next_run <= now:
+            due.append(p)
+    return due
+
+async def update_auto_post_next(schedule_id: int, interval_minutes: int = 60, **kwargs):
+    """Update next run time for auto post."""
+    import datetime
+    next_run = (datetime.datetime.utcnow() + datetime.timedelta(minutes=interval_minutes)).isoformat()
+    await table_update("auto_post_schedules", {"next_run_at": next_run}, {"schedule_id": schedule_id})
+
+async def get_drip_channels() -> list:
+    """Get channels with active drip approval."""
+    channels = await table_select("managed_channels")
+    return [c for c in (channels or []) if c.get("drip_rate") and c.get("drip_rate") > 0]
