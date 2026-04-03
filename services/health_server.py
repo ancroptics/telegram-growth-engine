@@ -4,7 +4,7 @@ from aiohttp import web
 from config import Config
 
 logger = logging.getLogger(__name__)
-VERSION = "v3.0.0"
+VERSION = "v3.1.0"
 
 async def health_check(request):
     from database.connection import Database
