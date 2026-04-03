@@ -28,7 +28,7 @@ def init_db():
         }
         logger.info("Using Supabase REST API")
     elif DATABASE_URL:
-        logger.info("Using direct PostgreSQL via DATABASE_URL")
+        logger.info(f"Using direct PostgreSQL via DATABASE_URL (host: {DATABASE_URL.split('@')[1].split('/')[0] if '@' in DATABASE_URL else 'unknown'})")
     else:
         logger.error("No database configuration found!")
 
@@ -168,7 +168,16 @@ async def _get_pool():
     global _pool
     if _pool is None:
         import asyncpg
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+        import ssl
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        try:
+            _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3, ssl=ssl_ctx)
+            logger.info("PostgreSQL pool created successfully")
+        except Exception as e:
+            logger.error(f"Failed to create PG pool: {e}")
+            raise
     return _pool
 
 async def _pg_fetch(query, args=None):
