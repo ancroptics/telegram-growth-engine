@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import sys
-import traceback
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     ChatJoinRequestHandler, ChatMemberHandler, MessageHandler, filters
@@ -18,23 +17,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 async def post_init(app):
     try:
         await Database.run_migrations()
         logger.info("Database initialized")
     except Exception as e:
         logger.error(f"Database migration error: {e}")
-    try:
-        setup_scheduler(app)
-        logger.info("Scheduler started")
-    except Exception as e:
-        logger.error(f"Scheduler error: {e}")
-    try:
-        bot_info = await app.bot.get_me()
-        Config.BOT_USERNAME = bot_info.username
-        logger.info(f"Bot username: @{Config.BOT_USERNAME}")
-    except Exception as e:
-        logger.error(f"get_me error: {e}")
+    setup_scheduler(app)
+    logger.info("Scheduler started")
+    bot_info = await app.bot.get_me()
+    Config.BOT_USERNAME = bot_info.username
+    logger.info(f"Bot username: @{Config.BOT_USERNAME}")
+    # Start health server in the same event loop
+    await start_health_server()
+    logger.info(f"Health server started on port {Config.PORT}")
+
 
 def setup_handlers(app):
     from handlers.start import start_command, help_command, dashboard_command
@@ -74,6 +72,7 @@ def setup_handlers(app):
         media_router
     ))
 
+
 async def message_router(update, context):
     from handlers.admin_panel import admin_broadcast_handler
     from handlers.broadcast import broadcast_message_handler
@@ -88,6 +87,7 @@ async def message_router(update, context):
         except Exception as e:
             logger.error(f"Handler error: {e}")
 
+
 async def media_router(update, context):
     from handlers.broadcast import broadcast_message_handler
     from handlers.template_mgmt import template_content_handler
@@ -99,21 +99,16 @@ async def media_router(update, context):
         except Exception as e:
             logger.error(f"Media handler error: {e}")
 
-async def run_bot():
-    """Run both health server and bot in the same event loop."""
+
+def main():
     logger.info("Starting Telegram Growth Engine v3.0")
     if not Config.BOT_TOKEN:
         logger.critical("BOT_TOKEN not set! Exiting.")
         sys.exit(1)
+    if not Config.DATABASE_URL:
+        logger.critical("DATABASE_URL not set! Exiting.")
+        sys.exit(1)
 
-    # Start health server
-    try:
-        runner = await start_health_server()
-        logger.info("Health server started")
-    except Exception as e:
-        logger.error(f"Health server failed: {e}")
-
-    # Build bot application
     app = (
         ApplicationBuilder()
         .token(Config.BOT_TOKEN)
@@ -123,23 +118,11 @@ async def run_bot():
     setup_handlers(app)
 
     logger.info("Starting bot polling...")
-    try:
-        await app.initialize()
-        await app.start()
-        await app.updater.start_polling(
-            drop_pending_updates=True,
-            allowed_updates=["message", "callback_query", "chat_join_request", "my_chat_member"]
-        )
-        logger.info("Bot polling started successfully!")
-        # Keep running forever
-        while True:
-            await asyncio.sleep(3600)
-    except Exception as e:
-        logger.critical(f"Bot polling failed: {e}")
-        traceback.print_exc()
-        # Keep health server alive so we can see the error in logs
-        while True:
-            await asyncio.sleep(3600)
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=["message", "callback_query", "chat_join_request", "my_chat_member"]
+    )
+
 
 if __name__ == "__main__":
-    asyncio.run(run_bot())
+    main()
