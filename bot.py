@@ -10,14 +10,14 @@ from telegram.ext import (
 )
 from config import Config
 from database.connection import init_db
-from database.init_tables import verify_tables
+from database.init_tables import run_migrations
 from handlers.start import start_command, help_command, dashboard_command
 from handlers.channel_detection import channel_detection_handler
 from handlers.join_request import join_request_handler
 from handlers.callbacks import callback_router
 from handlers.user_commands import stats_command, referral_command, setdrip_command
 from handlers.admin_panel import admin_ban_command, admin_unban_command, admin_set_tier_command
-from services.scheduler_service import setup_scheduler
+from services.scheduler import setup_scheduler
 from services.health_server import start_health_server
 
 logging.basicConfig(
@@ -29,11 +29,9 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Start the bot."""
-    # Initialize database
     init_db()
     logger.info("Database initialized")
 
-    # Start health server for Render
     port = int(os.getenv("PORT", "10000"))
     start_health_server(port)
     logger.info(f"Health server running on port {port}")
@@ -51,27 +49,27 @@ def main():
     app.add_handler(CommandHandler("unban", admin_unban_command))
     app.add_handler(CommandHandler("settier", admin_set_tier_command))
 
-    # Chat member updates (channel add/remove detection)
+    # Chat member updates
     app.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
 
     # Join requests
     app.add_handler(ChatJoinRequestHandler(join_request_handler))
 
-    # All callback queries go through router
+    # All callback queries
     app.add_handler(CallbackQueryHandler(callback_router))
 
-    # Text message handler for stateful flows
+    # Text messages for stateful flows (private chat only)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
         handle_text_message
     ))
 
-    # Scheduler for auto-posts, drip approvals, broadcasts
+    # Scheduler
     setup_scheduler(app)
 
-    # Post-init: verify tables
+    # Post-init
     async def post_init(application):
-        await verify_tables()
+        await run_migrations()
         logger.info("Post-init migrations complete")
 
     app.post_init = post_init
@@ -85,44 +83,30 @@ async def handle_text_message(update: Update, context):
     if not update.message or not update.message.text:
         return
 
-    user_data = context.user_data
-    state = user_data.get("state")
+    ud = context.user_data
+    state = ud.get("state")
 
-    if state == "awaiting_broadcast_message":
+    if state == "awaiting_broadcast_message" or ud.get("bc_setup"):
         from handlers.broadcast import broadcast_message_handler
         await broadcast_message_handler(update, context)
-    elif state == "awaiting_template_body":
+    elif state == "awaiting_template_body" or ud.get("creating_template"):
         from handlers.template_mgmt import template_content_handler
         await template_content_handler(update, context)
-    elif state == "awaiting_autopost_message":
+    elif state == "awaiting_autopost_message" or ud.get("autopost_setup"):
         from handlers.auto_poster import autopost_content_handler
         await autopost_content_handler(update, context)
-    elif state == "awaiting_welcome_dm":
+    elif state == "awaiting_welcome_dm" or ud.get("editing_welcome_for"):
         from handlers.welcome_dm import welcome_message_handler
         await welcome_message_handler(update, context)
-    elif user_data.get("editing_welcome_for"):
-        from handlers.welcome_dm import welcome_message_handler
-        await welcome_message_handler(update, context)
-    elif user_data.get("fs_add_for"):
+    elif ud.get("fs_add_for"):
         from handlers.force_subscribe import handle_force_sub_add
         await handle_force_sub_add(update, context)
-    elif user_data.get("creating_template"):
-        from handlers.template_mgmt import template_content_handler
-        await template_content_handler(update, context)
-    elif user_data.get("admin_broadcast"):
+    elif ud.get("admin_broadcast"):
         from handlers.admin_panel import admin_broadcast_handler
         await admin_broadcast_handler(update, context)
-    elif user_data.get("editing_setting"):
+    elif ud.get("editing_setting"):
         from handlers.admin_panel import admin_setting_handler
         await admin_setting_handler(update, context)
-    elif user_data.get("bc_setup"):
-        from handlers.broadcast import broadcast_message_handler
-        await broadcast_message_handler(update, context)
-    elif user_data.get("autopost_setup"):
-        from handlers.auto_poster import autopost_content_handler
-        await autopost_content_handler(update, context)
-    else:
-        pass  # Ignore unrecognized text
 
 
 if __name__ == "__main__":
