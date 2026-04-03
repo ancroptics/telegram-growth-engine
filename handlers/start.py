@@ -24,7 +24,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tier = await get_owner_tier(user.id)
         ref_stats = await get_referral_stats(user.id)
         total_approved = sum(ch.get("total_approved", 0) for ch in channels)
-        text = (f"\U0001f680 <b>TELEGRAM GROWTH ENGINE v3.0</b>\n\n"
+        text = (f"\U0001f680 <b>TELEGRAM GROWTH ENGINE v3.1</b>\n\n"
                 f"Welcome, {user.first_name}!\n\n"
                 f"\U0001f4e2 Channels: {len(channels)}\n"
                 f"\u2705 Total Approved: {format_number(total_approved)}\n"
@@ -34,7 +34,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu_kb(is_admin=user.id in Config.SUPERADMIN_IDS))
     except Exception as e:
         logger.error(f"Start command error: {e}")
-        text = (f"\U0001f680 <b>TELEGRAM GROWTH ENGINE v3.0</b>\n\n"
+        text = (f"\U0001f680 <b>TELEGRAM GROWTH ENGINE v3.1</b>\n\n"
                 f"Welcome, {user.first_name}!\n\n"
                 f"\u26a0\ufe0f Database is currently unavailable. "
                 f"Some features may not work.\n\n"
@@ -54,7 +54,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tier = await get_owner_tier(user.id)
         ref_stats = await get_referral_stats(user.id)
         total_approved = sum(ch.get("total_approved", 0) for ch in channels)
-        text = (f"\U0001f680 <b>TELEGRAM GROWTH ENGINE v3.0</b>\n\n"
+        text = (f"\U0001f680 <b>TELEGRAM GROWTH ENGINE v3.1</b>\n\n"
                 f"\U0001f4e2 Channels: {len(channels)}\n"
                 f"\u2705 Total Approved: {format_number(total_approved)}\n"
                 f"\U0001f465 Referrals: {ref_stats.get('total', 0)}\n"
