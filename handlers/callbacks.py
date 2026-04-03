@@ -6,114 +6,113 @@ from telegram.ext import ContextTypes
 logger = logging.getLogger(__name__)
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Route ALL callback queries to the appropriate handler."""
+    """Route all callback queries to appropriate handlers."""
     query = update.callback_query
-    data = query.data or ""
+    if not query or not query.data:
+        return
+    await query.answer()
+    data = query.data
 
     try:
-        await query.answer()
-    except Exception:
-        pass
+        # Main menu
+        if data == "main_menu":
+            from handlers.start import start_command
+            # Fake an update with a message to reuse start
+            from utils.keyboards import main_menu_kb
+            from config import Config
+            is_admin = update.effective_user.id in Config.ADMIN_IDS or update.effective_user.id in Config.SUPERADMIN_IDS
+            await query.message.edit_text(
+                "\ud83c\udf1f <b>Telegram Growth Engine</b>\n\nSelect an option:",
+                parse_mode="HTML",
+                reply_markup=main_menu_kb(is_admin)
+            )
 
-    try:
-        # ── Navigation ──
-        if data in ("back_to_main", "main_menu"):
-            from handlers.start import show_main_menu
-            return await show_main_menu(update, context)
-
-        if data == "support":
-            from handlers.start import show_support
-            return await show_support(update, context)
-
-        # ── Channel management ──
-        if data in ("my_channels", "add_channel") or data.startswith(("manage_ch:", "ch_settings:", "ch_toggle:", "ch_delete:", "ch_confirm_delete:")):
+        # Channel management
+        elif data in ("my_channels", "add_channel") or data.startswith(("manage_ch:", "ch_toggle:", "ch_delete:", "ch_confirm_delete:")):
             from handlers.channel_settings import handle_channel_callback
-            return await handle_channel_callback(update, context)
+            await handle_channel_callback(update, context)
 
-        # ── Welcome DM ──
-        if data.startswith("ch_edit_welcome:") or data.startswith("welcome_"):
+        # Welcome DM editing
+        elif data.startswith("ch_edit_welcome:"):
             from handlers.welcome_dm import handle_welcome_dm_callback
-            return await handle_welcome_dm_callback(update, context)
+            await handle_welcome_dm_callback(update, context)
 
-        # ── Broadcast ──
-        if data in ("broadcast_menu",) or data.startswith("bc_"):
-            from handlers.broadcast import handle_broadcast_callback
-            return await handle_broadcast_callback(update, context)
-
-        # ── Template ──
-        if data in ("template_settings", "templates_list") or data.startswith("tmpl_"):
-            from handlers.template_mgmt import handle_template_callback
-            return await handle_template_callback(update, context)
-
-        # ── Admin / Superadmin panel ──
-        if data in ("admin_panel", "superadmin") or data.startswith(("admin_", "sa_")):
-            from handlers.admin_panel import handle_admin_callback
-            return await handle_admin_callback(update, context)
-
-        # ── Premium ──
-        if data in ("premium_info",) or data.startswith(("prem_", "premium_")):
-            from handlers.premium import handle_premium_callback
-            return await handle_premium_callback(update, context)
-
-        # ── Clone bot ──
-        if data in ("clone_bot", "clone_list") or data.startswith("clone_"):
-            from handlers.clone_bot import handle_clone_callback
-            return await handle_clone_callback(update, context)
-
-        # ── Analytics + Export ──
-        if data in ("analytics", "analytics_overview") or data.startswith(("analytics_", "ch_analytics:", "ch_export:")):
-            from handlers.analytics_view import handle_analytics_callback
-            return await handle_analytics_callback(update, context)
-
-        # ── Force subscribe ──
-        if data.startswith(("fs_verify:", "fs_toggle:", "fs_add:", "ch_force_sub:", "fs_remove:")):
+        # Force subscribe
+        elif data.startswith(("ch_force_sub:", "fs_")):
             from handlers.force_subscribe import handle_force_sub_callback
-            return await handle_force_sub_callback(update, context)
+            await handle_force_sub_callback(update, context)
 
-        # ── Batch approve / Drip / Pending ──
-        if data.startswith(("batch_", "drip_", "ch_pending:")):
-            from handlers.batch_approve import handle_batch_callback
-            return await handle_batch_callback(update, context)
+        # Broadcast
+        elif data in ("broadcast_menu",) or data.startswith("bc_"):
+            from handlers.broadcast import handle_broadcast_callback
+            await handle_broadcast_callback(update, context)
 
-        # ── Cross promo ──
-        if data in ("cross_promo",) or data.startswith(("xp_", "cp_cat:", "ch_cross_promo:")):
-            from handlers.cross_promo import handle_cross_promo_callback
-            return await handle_cross_promo_callback(update, context)
+        # Templates
+        elif data in ("template_settings", "templates_list") or data.startswith("tpl_"):
+            from handlers.template_mgmt import handle_template_callback
+            await handle_template_callback(update, context)
 
-        # ── Auto poster ──
-        if data in ("auto_poster",) or data.startswith("ap_"):
+        # Auto poster
+        elif data in ("auto_poster",) or data.startswith("ap_"):
             from handlers.auto_poster import handle_auto_poster_callback
-            return await handle_auto_poster_callback(update, context)
+            await handle_auto_poster_callback(update, context)
 
-        # ── User management ──
-        if data in ("user_mgmt",) or data.startswith("um_"):
+        # Analytics
+        elif data.startswith("ch_analytics:") or data == "analytics":
+            from handlers.analytics_view import handle_analytics_callback
+            await handle_analytics_callback(update, context)
+
+        # Batch approve
+        elif data.startswith("ch_pending:") or data.startswith("batch_"):
+            from handlers.batch_approve import handle_batch_callback
+            await handle_batch_callback(update, context)
+
+        # Premium
+        elif data in ("premium_info", "premium_buy") or data.startswith("premium_"):
+            from handlers.premium import handle_premium_callback
+            await handle_premium_callback(update, context)
+
+        # Clone bot
+        elif data in ("clone_bot",) or data.startswith("clone_"):
+            from handlers.clone_bot import handle_clone_callback
+            await handle_clone_callback(update, context)
+
+        # Cross promo
+        elif data in ("cross_promo",) or data.startswith("xpromo_"):
+            from handlers.cross_promo import handle_cross_promo_callback
+            await handle_cross_promo_callback(update, context)
+
+        # Admin panel
+        elif data.startswith("admin_"):
+            from handlers.admin_panel import handle_admin_callback
+            await handle_admin_callback(update, context)
+
+        # User management
+        elif data.startswith("user_"):
             from handlers.user_mgmt import handle_user_mgmt_callback
-            return await handle_user_mgmt_callback(update, context)
+            await handle_user_mgmt_callback(update, context)
 
-        # ── Language ──
-        if data.startswith(("lang_", "ch_i18n:")):
+        # Language
+        elif data.startswith("lang_"):
             from handlers.language_mgmt import handle_language_callback
-            return await handle_language_callback(update, context)
+            await handle_language_callback(update, context)
 
-        # ── Close ──
-        if data == "close":
-            try:
-                await query.message.delete()
-            except Exception:
-                pass
-            return
+        # Support
+        elif data == "support":
+            await query.message.edit_text(
+                "\ud83d\udcac <b>Support</b>\n\nFor help, contact @TGESupport",
+                parse_mode="HTML",
+                reply_markup=__import__('telegram', fromlist=['InlineKeyboardMarkup']).InlineKeyboardMarkup(
+                    [[__import__('telegram', fromlist=['InlineKeyboardButton']).InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]]
+                )
+            )
 
-        logger.warning(f"Unhandled callback: {data}")
+        else:
+            logger.warning(f"Unhandled callback: {data}")
 
-    except ImportError as e:
-        logger.error(f"Handler import error for \"{data}\": {e}")
-        try:
-            await query.message.reply_text("⚠️ Feature not available yet.")
-        except Exception:
-            pass
     except Exception as e:
-        logger.error(f"Callback error \"{data}\": {e}", exc_info=True)
+        logger.error(f"Callback error for '{data}': {e}", exc_info=True)
         try:
-            await query.message.reply_text("⚠️ Error occurred. Try /start.")
+            await query.message.edit_text(f"\u26a0\ufe0f Error processing request. Please try again.")
         except Exception:
             pass
