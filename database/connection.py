@@ -1,4 +1,4 @@
-"""Database connection \u2014 Supabase REST API or direct PostgreSQL."""
+"""Database connection - Supabase REST API or direct PostgreSQL."""
 import os
 import logging
 import json
@@ -17,7 +17,7 @@ _last_db_error_time = 0
 def init_db():
     global SUPABASE_URL, SUPABASE_KEY, DATABASE_URL, HEADERS
     SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-    SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "") or os.environ.get("SUPABASE_KEY", "") or os.environ.get("SUPABASE_ANON_KEY", "")
     DATABASE_URL = os.environ.get("DATABASE_URL", "")
     if SUPABASE_URL and SUPABASE_KEY:
         HEADERS = {
@@ -30,7 +30,7 @@ def init_db():
     elif DATABASE_URL:
         logger.info("Using direct PostgreSQL via DATABASE_URL")
     else:
-        logger.warning("No database config \u2014 bot runs in degraded mode")
+        logger.warning("No database config - bot runs in degraded mode")
 
 def _use_rest():
     return bool(SUPABASE_URL and SUPABASE_KEY)
@@ -167,14 +167,50 @@ async def _get_pool():
         ctx.verify_mode = ssl.CERT_NONE
         p = urlparse(DATABASE_URL)
         try:
-            _pool = await asyncpg.create_pool(
-                user=unquote(p.username or ""), password=unquote(p.password or ""),
-                host=p.hostname, port=p.port or 5432,
-                database=(p.path or "/postgres").lstrip("/"),
-                min_size=1, max_size=3, ssl=ctx,
-                command_timeout=30, statement_cache_size=0,
-            )
-            logger.info("PG pool created")
+            host = p.hostname
+            port = p.port or 5432
+            user = unquote(p.username or "")
+            password = unquote(p.password or "")
+            database = (p.path or "/postgres").lstrip("/")
+
+            if host and "supabase.co" in host:
+                ref = host.replace("db.", "").replace(".supabase.co", "")
+                pooler_regions = ["ap-south-1", "us-east-1", "us-west-1", "eu-west-1", "ap-southeast-1", "eu-central-1"]
+                pool_created = False
+                for region in pooler_regions:
+                    try:
+                        pooler_host = f"aws-0-{region}.pooler.supabase.com"
+                        _pool = await asyncpg.create_pool(
+                            user=f"postgres.{ref}", password=password,
+                            host=pooler_host, port=6543,
+                            database=database,
+                            min_size=1, max_size=3, ssl=ctx,
+                            command_timeout=30, statement_cache_size=0,
+                        )
+                        logger.info(f"PG pool created via pooler ({region})")
+                        pool_created = True
+                        break
+                    except Exception as pe:
+                        continue
+
+                if not pool_created:
+                    _pool = await asyncpg.create_pool(
+                        user=user, password=password,
+                        host=host, port=port,
+                        database=database,
+                        min_size=1, max_size=3, ssl=ctx,
+                        command_timeout=30, statement_cache_size=0,
+                    )
+                    logger.info("PG pool created (direct)")
+            else:
+                _pool = await asyncpg.create_pool(
+                    user=user, password=password,
+                    host=host, port=port,
+                    database=database,
+                    min_size=1, max_size=3, ssl=ctx,
+                    command_timeout=30, statement_cache_size=0,
+                )
+                logger.info("PG pool created")
         except Exception as e:
             logger.error(f"PG pool failed: {e}")
             _pool_failed = True
