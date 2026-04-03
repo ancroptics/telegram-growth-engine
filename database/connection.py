@@ -84,7 +84,7 @@ async def table_select(table, columns="*", filters=None, order=None, limit=None,
             args = list(filters.values())
         q = f"SELECT {columns} FROM {table}{where}"
         if order:
-            q += f" ORDER BY {order.replace(".", " ")}"
+            q += f" ORDER BY {order.replace(chr(46), chr(32))}"
         if limit:
             q += f" LIMIT {limit}"
         rows = await _pg_fetch(q, args)
