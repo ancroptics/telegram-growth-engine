@@ -1,3 +1,4 @@
+from html import escape as html_escape
 """Channel settings and management."""
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,13 +18,13 @@ async def show_channels_list(update: Update, context: ContextTypes.DEFAULT_TYPE,
     channels = await get_owner_channels(user.id)
     tier = await get_owner_tier(user.id)
     max_ch = TIER_LIMITS.get(tier, {}).get("max_channels", 1)
-    text = (f"\ud83d\udce2 <b>MY CHANNELS</b> ({len(channels)}/{max_ch})\n\n")
+    text = (f"📢 <b>MY CHANNELS</b> ({len(channels)}/{max_ch})\n\n")
     if not channels:
         text += "No channels yet. Add bot as admin to a channel!"
     else:
         for ch in channels:
-            status = '\u2705' if ch.get('auto_approve') else '\u23f8'
-            text += f"{status} {ch.get('chat_title','?')[:25]} \u2014 {format_number(ch.get('member_count',0))} members\n"
+            status = '✅' if ch.get('auto_approve') else '⏸'
+            text += f"{status} {html_escape(ch.get('chat_title','?')[:25])} — {format_number(ch.get('member_count',0))} members\n"
     if is_command:
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=channels_list_kb(channels))
     else:
@@ -40,7 +41,7 @@ async def handle_channel_callback(update: Update, context: ContextTypes.DEFAULT_
 
     elif data == "add_channel":
         await query.answer()
-        text = ("\u2795 <b>Add Channel</b>\n\n"
+        text = ("➕ <b>Add Channel</b>\n\n"
                 "1. Add this bot to your channel as <b>admin</b>\n"
                 "2. Grant permission: <b>Invite Users via Link</b>\n"
                 "3. Enable <b>Approve New Members</b> in channel settings\n\n"
@@ -54,12 +55,12 @@ async def handle_channel_callback(update: Update, context: ContextTypes.DEFAULT_
             await query.answer("Channel not found", show_alert=True)
             return
         await query.answer()
-        auto = '\u2705 ON' if channel.get('auto_approve') else '\u274c OFF'
-        dm = '\u2705 ON' if channel.get('welcome_dm_enabled') else '\u274c OFF'
-        text = (f"\ud83d\udce2 <b>{channel.get('chat_title','')}</b>\n\n"
-                f"\ud83d\udc65 Members: {format_number(channel.get('member_count',0))}\n"
-                f"\u2705 Total Approved: {format_number(channel.get('total_approved',0))}\n"
-                f"\ud83d\udcac DMs Sent: {format_number(channel.get('total_dms_sent',0))}\n\n"
+        auto = '✅ ON' if channel.get('auto_approve') else '❌ OFF'
+        dm = '✅ ON' if channel.get('welcome_dm_enabled') else '❌ OFF'
+        text = (f"📢 <b>{html_escape(channel.get('chat_title',''))}</b>\n\n"
+                f"👥 Members: {format_number(channel.get('member_count',0))}\n"
+                f"✅ Total Approved: {format_number(channel.get('total_approved',0))}\n"
+                f"💬 DMs Sent: {format_number(channel.get('total_dms_sent',0))}\n\n"
                 f"Auto-Approve: {auto}\n"
                 f"Welcome DM: {dm}")
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=channel_manage_kb(chat_id))
@@ -69,7 +70,7 @@ async def handle_channel_callback(update: Update, context: ContextTypes.DEFAULT_
         channel = await get_managed_channel(chat_id)
         if not channel: return
         await query.answer()
-        text = f"\u2699\ufe0f <b>Settings: {channel.get('chat_title','')}</b>\n\nToggle features below:"
+        text = f"⚙️ <b>Settings: {html_escape(channel.get('chat_title',''))}</b>\n\nToggle features below:"
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=channel_settings_kb(chat_id, channel))
 
     elif data.startswith("ch_toggle:"):
@@ -93,11 +94,11 @@ async def handle_channel_callback(update: Update, context: ContextTypes.DEFAULT_
         channel = await get_managed_channel(chat_id)
         if not channel: return
         await query.answer()
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("\u26a0\ufe0f Yes, Remove", callback_data=f"ch_confirm_delete:{chat_id}"), InlineKeyboardButton("\u274c Cancel", callback_data=f"manage_ch:{chat_id}")]])
-        await query.message.edit_text(f"\u26a0\ufe0f Remove <b>{channel.get('chat_title','')}</b>?\nThis deletes all data.", parse_mode="HTML", reply_markup=kb)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⚠️ Yes, Remove", callback_data=f"ch_confirm_delete:{chat_id}"), InlineKeyboardButton("❌ Cancel", callback_data=f"manage_ch:{chat_id}")]])
+        await query.message.edit_text(f"⚠️ Remove <b>{html_escape(channel.get('chat_title',''))}</b>?\nThis deletes all data.", parse_mode="HTML", reply_markup=kb)
 
     elif data.startswith("ch_confirm_delete:"):
         chat_id = int(data.split(":")[1])
         await remove_managed_channel(chat_id)
-        await query.answer("\u2705 Channel removed", show_alert=True)
+        await query.answer("✅ Channel removed", show_alert=True)
         await show_channels_list(update, context)

@@ -1,3 +1,4 @@
+from html import escape as html_escape
 """Batch approve/decline and drip management."""
 import logging
 import asyncio
@@ -24,20 +25,20 @@ async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if not channel: return
         await query.answer()
         pending = await get_pending_requests(chat_id, limit=100)
-        text = (f"\ud83d\udccb <b>Pending Requests</b>\n\n"
-                f"\ud83d\udce2 {channel.get('chat_title','')}\n"
-                f"\u23f3 Pending: {len(pending)}\n\n")
+        text = (f"📋 <b>Pending Requests</b>\n\n"
+                f"📢 {html_escape(channel.get('chat_title',''))}\n"
+                f"⏳ Pending: {len(pending)}\n\n")
         if pending:
             text += "Recent requests:\n"
             for r in pending[:10]:
-                text += f"  \u2022 {r.get('user_full_name','?')} (ID: {r['user_id']})\n"
+                text += f"  • {html_escape(r.get('user_full_name','?'))} (ID: {r['user_id']})\n"
             if len(pending) > 10:
                 text += f"  ... +{len(pending)-10} more\n"
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=batch_kb(chat_id))
 
     elif data.startswith("batch_approve:"):
         chat_id = int(data.split(":")[1])
-        await query.answer("\u23f3 Approving...")
+        await query.answer("⏳ Approving...")
         pending = await get_pending_requests(chat_id, limit=200)
         approved = 0
         for req in pending:
@@ -49,11 +50,11 @@ async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TY
             except RetryAfter as e: await asyncio.sleep(e.retry_after)
             except Exception as e: logger.error(f"Approve error: {e}")
             await asyncio.sleep(0.3)
-        await query.message.edit_text(f"\u2705 Batch approved {approved} users!", reply_markup=back_kb(f"manage_ch:{chat_id}"))
+        await query.message.edit_text(f"✅ Batch approved {approved} users!", reply_markup=back_kb(f"manage_ch:{chat_id}"))
 
     elif data.startswith("batch_decline:"):
         chat_id = int(data.split(":")[1])
-        await query.answer("\u23f3 Declining...")
+        await query.answer("⏳ Declining...")
         pending = await get_pending_requests(chat_id, limit=200)
         declined = 0
         for req in pending:
@@ -63,7 +64,7 @@ async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 declined += 1
             except Exception: pass
             await asyncio.sleep(0.3)
-        await query.message.edit_text(f"\u274c Batch declined {declined} users.", reply_markup=back_kb(f"manage_ch:{chat_id}"))
+        await query.message.edit_text(f"❌ Batch declined {declined} users.", reply_markup=back_kb(f"manage_ch:{chat_id}"))
 
     elif data.startswith("drip_config:"):
         chat_id = int(data.split(":")[1])
@@ -73,15 +74,15 @@ async def handle_batch_callback(update: Update, context: ContextTypes.DEFAULT_TY
         rate = channel.get("drip_rate", 50)
         start_h = channel.get("drip_active_start", 8)
         end_h = channel.get("drip_active_end", 23)
-        text = (f"\ud83d\udca7 <b>Drip Approve Config</b>\n\n"
+        text = (f"💧 <b>Drip Approve Config</b>\n\n"
                 f"Rate: {rate} users per 5 min\n"
                 f"Active: {start_h}:00 - {end_h}:00\n\n"
-                f"Use /setdrip {chat_id} <rate> <start_hour> <end_hour>")
+                f"Use /setdrip {chat_id} {{rate}} {{start_hour}} {{end_hour}}")
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=drip_kb(chat_id))
 
     elif data.startswith("drip_start:"):
         chat_id = int(data.split(":")[1])
         await update_channel_setting(chat_id, drip_enabled=True)
-        await query.answer("\ud83d\udca7 Drip approve enabled!", show_alert=True)
+        await query.answer("💧 Drip approve enabled!", show_alert=True)
         update.callback_query.data = f"drip_config:{chat_id}"
         await handle_batch_callback(update, context)
