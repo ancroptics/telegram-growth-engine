@@ -2,13 +2,15 @@
 import asyncio
 import logging
 import sys
+import traceback
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     ChatJoinRequestHandler, ChatMemberHandler, MessageHandler, filters
 )
+from telegram.error import TelegramError
 from config import Config
 from database.connection import Database
-from services.health_server import start_health_server
+from services.health_server import start_health_server, set_bot_status
 from services.scheduler import setup_scheduler
 
 logging.basicConfig(
@@ -16,6 +18,12 @@ logging.basicConfig(
     level=getattr(logging, Config.LOG_LEVEL, logging.INFO)
 )
 logger = logging.getLogger(__name__)
+
+
+async def error_handler(update, context):
+    """Log errors and continue running."""
+    logger.error(f"Exception while handling an update: {context.error}")
+    logger.error(traceback.format_exception(type(context.error), context.error, context.error.__traceback__))
 
 
 async def post_init(app):
@@ -26,20 +34,29 @@ async def post_init(app):
     try:
         await Database.get_pool()
         logger.info("Database connection verified")
+        set_bot_status("db_ok", True)
     except Exception as e:
         logger.error(f"Database connection check failed: {e}")
+        set_bot_status("db_ok", False)
     try:
         setup_scheduler(app)
+        set_bot_status("scheduler", True)
     except Exception as e:
         logger.error(f"Scheduler setup failed: {e}")
+        set_bot_status("scheduler", False)
+    
+    set_bot_status("polling", True)
+    logger.info("Bot post_init complete - all systems go")
 
 
 async def post_shutdown(app):
+    set_bot_status("polling", False)
     await Database.close()
 
 
 def main():
     Config.validate()
+    logger.info(f"Starting bot with token ending in ...{Config.BOT_TOKEN[-6:]}")
 
     app = (
         ApplicationBuilder()
@@ -48,8 +65,11 @@ def main():
         .post_shutdown(post_shutdown)
         .build()
     )
+    
+    # Global error handler
+    app.add_error_handler(error_handler)
 
-    # Command handlers
+    # -- Command handlers --
     from handlers.start import start_command, help_command, dashboard_command
     from handlers.user_commands import referral_command, stats_command, setdrip_command
     from handlers.admin_panel import admin_ban_command, admin_unban_command, admin_set_tier_command
@@ -69,23 +89,24 @@ def main():
     app.add_handler(CommandHandler("deltemplate", del_template_cmd))
     app.add_handler(CommandHandler("autopost", autopost_cmd))
 
-    # Callback query router
+    # -- Callback query handler (single router) --
     from handlers.callbacks import callback_router
     app.add_handler(CallbackQueryHandler(callback_router))
 
-    # Join request handler
+    # -- Chat join request handler --
     from handlers.join_request import join_request_handler
     app.add_handler(ChatJoinRequestHandler(join_request_handler))
 
-    # Chat member updates
+    # -- Chat member updates (detect bot added/removed) --
     from handlers.channel_detection import channel_detection_handler
     app.add_handler(ChatMemberHandler(
         channel_detection_handler,
         chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER
     ))
 
-    # Text message handler
+    # -- Message handler for all text editing flows --
     async def text_message_handler(update, context):
+        """Route text messages to active editing flows."""
         if context.user_data.get("fs_add_for"):
             from handlers.force_subscribe import handle_force_sub_add
             return await handle_force_sub_add(update, context)
@@ -108,7 +129,10 @@ def main():
             from handlers.admin_panel import admin_setting_handler
             return await admin_setting_handler(update, context)
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        text_message_handler
+    ))
 
     async def media_message_handler(update, context):
         if context.user_data.get("bc_setup"):
@@ -125,7 +149,10 @@ def main():
 
     logger.info("Starting bot in polling mode...")
     app.run_polling(
-        allowed_updates=["message", "callback_query", "chat_join_request", "my_chat_member"],
+        allowed_updates=[
+            "message", "callback_query", "chat_join_request",
+            "my_chat_member", "chat_member"
+        ],
         drop_pending_updates=True
     )
 
