@@ -1,6 +1,7 @@
-"""Telegram Growth Engine — Main bot entry point."""
+"""Telegram Growth Engine - Main bot entry point."""
 import logging
 import asyncio
+import os
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -8,81 +9,78 @@ from telegram.ext import (
     ChatMemberHandler
 )
 from config import Config
-from database.connection import db
+from database.connection import init_db
+from database.init_tables import verify_tables
 from handlers.start import start_command, help_command, dashboard_command
-from handlers.channel_detection import my_chat_member_handler
+from handlers.channel_detection import channel_detection_handler
 from handlers.join_request import join_request_handler
-from handlers.broadcast import (
-    broadcast_start, broadcast_message, broadcast_confirm_handler
-)
-from handlers.callbacks import button_callback
-from handlers.auto_poster import (
-    autopost_command, autopost_set_message, autopost_set_interval,
-    autopost_confirm_handler
-)
-from handlers.template_mgmt import new_template_command, del_template_command, template_body_handler
+from handlers.callbacks import callback_router
 from handlers.user_commands import stats_command, referral_command, setdrip_command
-from handlers.force_subscribe import force_sub_check
-from handlers.welcome_dm import edit_welcome_message_handler
-from handlers.admin_panel import admin_command, admin_callback_handler
+from handlers.admin_panel import admin_ban_command, admin_unban_command, admin_set_tier_command
 from services.scheduler_service import setup_scheduler
+from services.health_server import start_health_server
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
 )
 logger = logging.getLogger(__name__)
 
 
 def main():
     """Start the bot."""
+    # Initialize database
+    init_db()
+    logger.info("Database initialized")
+
+    # Start health server for Render
+    port = int(os.getenv("PORT", "10000"))
+    start_health_server(port)
+    logger.info(f"Health server running on port {port}")
+
     app = Application.builder().token(Config.BOT_TOKEN).build()
 
     # Commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("dashboard", dashboard_command))
-    app.add_handler(CommandHandler("broadcast", broadcast_start))
-    app.add_handler(CommandHandler("autopost", autopost_command))
-    app.add_handler(CommandHandler("newtemplate", new_template_command))
-    app.add_handler(CommandHandler("deltemplate", del_template_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("referral", referral_command))
     app.add_handler(CommandHandler("setdrip", setdrip_command))
-    app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("ban", admin_ban_command))
+    app.add_handler(CommandHandler("unban", admin_unban_command))
+    app.add_handler(CommandHandler("settier", admin_set_tier_command))
 
     # Chat member updates (channel add/remove detection)
-    app.add_handler(ChatMemberHandler(my_chat_member_handler, ChatMemberHandler.MY_CHAT_MEMBER))
+    app.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
 
     # Join requests
     app.add_handler(ChatJoinRequestHandler(join_request_handler))
 
-    # Callback queries
-    app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^admin_"))
-    app.add_handler(CallbackQueryHandler(broadcast_confirm_handler, pattern=r"^bc_"))
-    app.add_handler(CallbackQueryHandler(autopost_confirm_handler, pattern=r"^ap_"))
-    app.add_handler(CallbackQueryHandler(button_callback))
+    # All callback queries go through router
+    app.add_handler(CallbackQueryHandler(callback_router))
 
-    # Message handlers (order matters — most specific first)
+    # Text message handler for stateful flows
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Regex(r"^/?"),
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
         handle_text_message
     ))
 
-    # Force subscribe check on any group message
-    app.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & ~filters.COMMAND,
-        force_sub_check
-    ))
-
-    # Scheduler for auto-posts and stats
+    # Scheduler for auto-posts, drip approvals, broadcasts
     setup_scheduler(app)
 
-    logger.info("🚀 Bot starting...")
+    # Post-init: verify tables
+    async def post_init(application):
+        await verify_tables()
+        logger.info("Post-init migrations complete")
+
+    app.post_init = post_init
+
+    logger.info("Starting bot in polling mode...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
-async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_text_message(update: Update, context):
     """Route text messages based on user state."""
     if not update.message or not update.message.text:
         return
@@ -91,15 +89,38 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     state = user_data.get("state")
 
     if state == "awaiting_broadcast_message":
-        await broadcast_message(update, context)
+        from handlers.broadcast import broadcast_message_handler
+        await broadcast_message_handler(update, context)
     elif state == "awaiting_template_body":
-        await template_body_handler(update, context)
+        from handlers.template_mgmt import template_content_handler
+        await template_content_handler(update, context)
     elif state == "awaiting_autopost_message":
-        await autopost_set_message(update, context)
-    elif state == "awaiting_autopost_interval":
-        await autopost_set_interval(update, context)
+        from handlers.auto_poster import autopost_content_handler
+        await autopost_content_handler(update, context)
     elif state == "awaiting_welcome_dm":
-        await edit_welcome_message_handler(update, context)
+        from handlers.welcome_dm import welcome_message_handler
+        await welcome_message_handler(update, context)
+    elif user_data.get("editing_welcome_for"):
+        from handlers.welcome_dm import welcome_message_handler
+        await welcome_message_handler(update, context)
+    elif user_data.get("fs_add_for"):
+        from handlers.force_subscribe import handle_force_sub_add
+        await handle_force_sub_add(update, context)
+    elif user_data.get("creating_template"):
+        from handlers.template_mgmt import template_content_handler
+        await template_content_handler(update, context)
+    elif user_data.get("admin_broadcast"):
+        from handlers.admin_panel import admin_broadcast_handler
+        await admin_broadcast_handler(update, context)
+    elif user_data.get("editing_setting"):
+        from handlers.admin_panel import admin_setting_handler
+        await admin_setting_handler(update, context)
+    elif user_data.get("bc_setup"):
+        from handlers.broadcast import broadcast_message_handler
+        await broadcast_message_handler(update, context)
+    elif user_data.get("autopost_setup"):
+        from handlers.auto_poster import autopost_content_handler
+        await autopost_content_handler(update, context)
     else:
         pass  # Ignore unrecognized text
 
