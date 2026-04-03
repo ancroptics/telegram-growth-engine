@@ -22,5 +22,5 @@ async def handle_language_callback(update: Update, context: ContextTypes.DEFAULT
         for code, name in SUPPORTED_LANGS.items():
             has = "✅" if code in i18n else "❌"
             text += f"{has} {name}\n"
-        text += f"\nUse /setlang {chat_id} <lang_code> to set."
+        text += f"\nUse /setlang {chat_id} {{lang_code}} to set."
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=back_kb(f"manage_ch:{chat_id}"))

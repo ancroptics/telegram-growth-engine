@@ -1,3 +1,4 @@
+from html import escape as html_escape
 """Cross-promotion management."""
 import logging
 from telegram import Update
@@ -16,6 +17,6 @@ async def handle_cross_promo_callback(update: Update, context: ContextTypes.DEFA
     text = "🔄 <b>Cross-Promotion</b>\n\n"
     for ch in channels:
         cp = "✅" if ch.get("cross_promo_enabled") else "❌"
-        text += f"📢 {ch.get('chat_title','?')}: {cp}\n"
-    text += "\nUse /crosspromo <channel_id> to enable."
+        text += f"📢 {html_escape(ch.get('chat_title','?'))}: {cp}\n"
+    text += "\nUse /crosspromo {channel_id} to enable."
     await query.message.edit_text(text, parse_mode="HTML", reply_markup=back_kb())
