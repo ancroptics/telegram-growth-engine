@@ -1,159 +1,159 @@
 """Async PostgreSQL connection via Supabase REST API (HTTPS).
 
-Uses the PostgREST RPC endpoint to execute SQL queries over HTTPS,
-bypassing port restrictions on Render free tier.
+Uses the PostgREST RPC endpoint to execute raw SQL,
+and Supabase client for ORM-style queries.
 """
+import os
 import logging
-import re
+import json
+from typing import Any, Optional
+
 import httpx
-from config import Config
 
 logger = logging.getLogger(__name__)
 
-SUPABASE_URL = "https://yholtsvlkpcxclwecpfu.supabase.co"
-SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlob2x0c3Zsa3BjeGNsd2VjcGZ1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTA2OTc4NSwiZXhwIjoyMDkwNjQ1Nzg1fQ.JRtuZAN5M0n18GvZQrP0EfeLlMJBDQP2u2SpuKrK2Cw"
+# ── Supabase connection info (from env) ──────────────────────────
+SUPABASE_URL: str = ""
+SUPABASE_KEY: str = ""
+HEADERS: dict = {}
 
-HEADERS = {
-    "apikey": SERVICE_KEY,
-    "Authorization": f"Bearer {SERVICE_KEY}",
-    "Content-Type": "application/json",
-}
+_supabase_client = None
 
 
-def _interpolate_params(query: str, args: tuple) -> str:
-    """Replace $1, $2, ... placeholders with properly escaped values."""
-    if not args:
-        return query
-
-    def replacer(match):
-        idx = int(match.group(1)) - 1
-        if idx >= len(args):
-            return match.group(0)
-        val = args[idx]
-        if val is None:
-            return "NULL"
-        elif isinstance(val, bool):
-            return "TRUE" if val else "FALSE"
-        elif isinstance(val, (int, float)):
-            return str(val)
-        elif isinstance(val, str):
-            escaped = val.replace("'", "''")
-            return f"'{escaped}'"
-        elif isinstance(val, list):
-            import json
-            escaped = json.dumps(val).replace("'", "''")
-            return f"'{escaped}'::jsonb"
-        else:
-            escaped = str(val).replace("'", "''")
-            return f"'{escaped}'"
-
-    return re.sub(r'\$(\d+)', replacer, query)
+def init_db():
+    """Initialize DB connection settings from environment variables."""
+    global SUPABASE_URL, SUPABASE_KEY, HEADERS, _supabase_client
+    SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+    SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logger.error("SUPABASE_URL or SUPABASE_SERVICE_KEY not set!")
+        return
+    HEADERS = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    try:
+        from supabase import create_client
+        _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        logger.info("Supabase client initialized")
+    except Exception as e:
+        logger.error(f"Failed to create Supabase client: {e}")
 
 
-class Database:
-    _client = None
+def get_supabase():
+    """Return the Supabase client."""
+    global _supabase_client
+    if _supabase_client is None:
+        init_db()
+    return _supabase_client
 
-    @classmethod
-    def _get_client(cls):
-        if cls._client is None:
-            cls._client = httpx.AsyncClient(timeout=30.0)
-        return cls._client
 
-    @classmethod
-    async def _call_rpc(cls, sql: str, args: tuple = ()) -> list:
-        """Execute SQL via Supabase RPC endpoint."""
-        full_sql = _interpolate_params(sql, args)
-        client = cls._get_client()
+async def execute_sql(query: str, params: Optional[dict] = None) -> Any:
+    """Execute raw SQL via Supabase RPC."""
+    url = f"{SUPABASE_URL}/rest/v1/rpc/exec_sql"
+    payload = {"query": query}
+    if params:
+        payload["params"] = params
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, headers=HEADERS, json=payload)
+        if resp.status_code >= 400:
+            logger.error(f"SQL error: {resp.status_code} {resp.text}")
+            return None
         try:
-            resp = await client.post(
-                f"{SUPABASE_URL}/rest/v1/rpc/exec_query",
-                headers=HEADERS,
-                json={"sql_text": full_sql},
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            if isinstance(result, dict) and "error" in result:
-                logger.error(f"SQL error: {result['error']}")
-                raise Exception(result["error"])
-            return result if isinstance(result, list) else []
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error calling RPC: {e.response.status_code} {e.response.text}")
-            raise
-        except Exception as e:
-            logger.error(f"RPC call failed: {e}")
-            raise
+            return resp.json()
+        except Exception:
+            return resp.text
 
-    @classmethod
-    async def _call_dml(cls, sql: str, args: tuple = ()) -> str:
-        """Execute DML (INSERT/UPDATE/DELETE) via Supabase RPC endpoint."""
-        full_sql = _interpolate_params(sql, args)
-        client = cls._get_client()
+
+async def table_select(
+    table: str,
+    columns: str = "*",
+    filters: Optional[dict] = None,
+    order: Optional[str] = None,
+    limit: Optional[int] = None,
+    single: bool = False,
+) -> Any:
+    """SELECT from a Supabase table via REST."""
+    url = f"{SUPABASE_URL}/rest/v1/{table}?select={columns}"
+    if filters:
+        for k, v in filters.items():
+            url += f"&{k}=eq.{v}"
+    if order:
+        url += f"&order={order}"
+    if limit:
+        url += f"&limit={limit}"
+    headers = {**HEADERS}
+    if single:
+        headers["Accept"] = "application/vnd.pgrst.object+json"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code == 406 and single:
+            return None
+        if resp.status_code >= 400:
+            logger.error(f"Select error on {table}: {resp.status_code} {resp.text}")
+            return [] if not single else None
+        return resp.json()
+
+
+async def table_insert(table: str, data: dict, upsert: bool = False) -> Any:
+    """INSERT into a Supabase table."""
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    headers = {**HEADERS}
+    if upsert:
+        headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, headers=headers, json=data)
+        if resp.status_code >= 400:
+            logger.error(f"Insert error on {table}: {resp.status_code} {resp.text}")
+            return None
         try:
-            resp = await client.post(
-                f"{SUPABASE_URL}/rest/v1/rpc/exec_dml",
-                headers=HEADERS,
-                json={"sql_text": full_sql},
-            )
-            resp.raise_for_status()
             result = resp.json()
-            if isinstance(result, dict) and "error" in result:
-                logger.error(f"SQL error: {result['error']}")
-                raise Exception(result["error"])
-            return "OK"
-        except Exception as e:
-            logger.error(f"DML call failed: {e}")
-            raise
-
-    @classmethod
-    async def get_pool(cls):
-        """Compatibility method - tests connection."""
-        client = cls._get_client()
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/rpc/exec_query",
-            headers=HEADERS,
-            json={"sql_text": "SELECT 1 as ok"},
-        )
-        resp.raise_for_status()
-        logger.info("Database connection verified via REST API")
-        return cls
-
-    @classmethod
-    async def close(cls):
-        if cls._client:
-            await cls._client.aclose()
-            cls._client = None
-
-    @classmethod
-    async def execute(cls, query, *args):
-        sql_upper = query.strip().upper()
-        if sql_upper.startswith(("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP")):
-            return await cls._call_dml(query, args)
-        else:
-            return await cls._call_rpc(query, args)
-
-    @classmethod
-    async def fetchrow(cls, query, *args):
-        rows = await cls._call_rpc(query, args)
-        return rows[0] if rows else None
+            return result[0] if isinstance(result, list) and result else result
+        except Exception:
+            return None
 
 
-    @classmethod
-    async def fetch_one(cls, query, *args):
-        """Alias for fetchrow."""
-        return await cls.fetchrow(query, *args)
+async def table_update(table: str, data: dict, filters: dict) -> Any:
+    """UPDATE a Supabase table row."""
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    for k, v in filters.items():
+        url += f"?{k}=eq.{v}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.patch(url, headers=HEADERS, json=data)
+        if resp.status_code >= 400:
+            logger.error(f"Update error on {table}: {resp.status_code} {resp.text}")
+            return None
+        try:
+            result = resp.json()
+            return result[0] if isinstance(result, list) and result else result
+        except Exception:
+            return None
 
-    @classmethod
-    async def fetch(cls, query, *args):
-        return await cls._call_rpc(query, args)
 
-    @classmethod
-    async def fetchval(cls, query, *args):
-        rows = await cls._call_rpc(query, args)
-        if rows and isinstance(rows[0], dict):
-            return next(iter(rows[0].values()), None)
-        return None
+async def table_delete(table: str, filters: dict) -> bool:
+    """DELETE from a Supabase table."""
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    for k, v in filters.items():
+        url += f"?{k}=eq.{v}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.delete(url, headers=HEADERS)
+        if resp.status_code >= 400:
+            logger.error(f"Delete error on {table}: {resp.status_code} {resp.text}")
+            return False
+        return True
 
-    @classmethod
-    async def run_migrations(cls):
-        """Migrations already applied via management API."""
-        logger.info("Migrations managed externally - skipping")
+
+async def rpc(function_name: str, params: Optional[dict] = None) -> Any:
+    """Call a Supabase RPC function."""
+    url = f"{SUPABASE_URL}/rest/v1/rpc/{function_name}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, headers=HEADERS, json=params or {})
+        if resp.status_code >= 400:
+            logger.error(f"RPC error {function_name}: {resp.status_code} {resp.text}")
+            return None
+        try:
+            return resp.json()
+        except Exception:
+            return resp.text
