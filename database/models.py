@@ -221,8 +221,8 @@ async def log_join_request(chat_id: int, user_id: int, username: str = None):
         "username": username or "", "status": "pending",
     }, upsert=True)
 
-async def approve_join_request_db(chat_id: int, user_id: int):
-    await table_update("join_requests", {"status": "approved"}, {"chat_id": chat_id, "user_id": user_id})
+async def approve_join_request_db(chat_id: int, user_id: int, method: str = "auto"):
+    await table_update("join_requests", {"status": "approved", "approval_method": method}, {"chat_id": chat_id, "user_id": user_id})
     await add_channel_member(chat_id, user_id, status="active")
 
 async def update_channel_stats(chat_id: int, **kwargs):
@@ -257,3 +257,23 @@ async def get_global_stats() -> dict:
 async def get_due_auto_posts() -> list:
     """Get auto posts that are due to be sent."""
     return await get_active_auto_posts()
+
+
+# ═══ MISSING FUNCTIONS (referenced by scheduler & handlers) ═══
+
+async def update_auto_post_next(schedule_id: int, interval_minutes: int):
+    """Update next_run_at for an auto post schedule."""
+    from datetime import datetime, timedelta
+    next_run = datetime.utcnow() + timedelta(minutes=interval_minutes)
+    await table_update("auto_posts", {"next_run_at": next_run.isoformat()}, {"id": schedule_id})
+
+
+async def get_drip_channels() -> list:
+    """Get channels that have drip approval enabled (drip_rate > 0)."""
+    channels = await table_select("managed_channels") or []
+    return [ch for ch in channels if ch.get("drip_rate", 0) > 0]
+
+
+async def get_pending_requests(chat_id: int) -> list:
+    """Get pending join requests for a channel."""
+    return await table_select("join_requests", filters={"chat_id": chat_id, "status": "pending"}) or []
