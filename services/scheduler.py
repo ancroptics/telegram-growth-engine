@@ -5,9 +5,19 @@ from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from telegram.ext import Application
+import aiohttp
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
+
+async def self_ping_job():
+    """Ping own health endpoint to prevent Render free tier spin-down."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://telegram-growth-engine.onrender.com/health", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                logger.debug(f"Self-ping: {resp.status}")
+    except Exception as e:
+        logger.warning(f"Self-ping failed: {e}")
 
 async def drip_approve_job(app: Application):
     from database.models import get_drip_channels, get_pending_requests, approve_join_request_db
@@ -60,8 +70,9 @@ async def scheduled_broadcast_job(app: Application):
         await update_broadcast_progress(bc["broadcast_id"], sent, failed, blocked, "completed")
 
 def setup_scheduler(app: Application):
+    scheduler.add_job(self_ping_job, IntervalTrigger(minutes=2), id="selfping", replace_existing=True, max_instances=1)
     scheduler.add_job(drip_approve_job, IntervalTrigger(minutes=5), args=[app], id="drip", replace_existing=True, max_instances=1)
     scheduler.add_job(auto_post_job, IntervalTrigger(minutes=1), args=[app], id="autopost", replace_existing=True, max_instances=1)
     scheduler.add_job(scheduled_broadcast_job, IntervalTrigger(minutes=2), args=[app], id="broadcast", replace_existing=True, max_instances=1)
     scheduler.start()
-    logger.info("Scheduler started")
+    logger.info("Scheduler started with self-ping every 2 minutes")
