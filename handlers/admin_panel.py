@@ -9,21 +9,42 @@ from database.models import (
 )
 from utils.decorators import superadmin_only
 from utils.helpers import format_number
-from utils.keyboards import admin_panel_kb
 
 logger = logging.getLogger(__name__)
 
 
-@superadmin_only
-async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "\ud83d\udd10 <b>Superadmin Panel</b>\n\nSelect an option:",
-        parse_mode="HTML",
-        reply_markup=admin_panel_kb()
-    )
+def admin_panel_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("\ud83d\udcca Stats", callback_data="sa_stats"),
+         InlineKeyboardButton("\ud83d\udc65 Users", callback_data="sa_users")],
+        [InlineKeyboardButton("\ud83d\udce2 Channels", callback_data="sa_channels"),
+         InlineKeyboardButton("\u2699\ufe0f Settings", callback_data="sa_settings")],
+        [InlineKeyboardButton("\ud83d\udce3 Broadcast All", callback_data="sa_broadcast")],
+        [InlineKeyboardButton("\ud83d\udd27 System", callback_data="sa_system")],
+        [InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]
+    ])
+
+
+def settings_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("\ud83d\udcac Support Username", callback_data="sa_edit:support_username")],
+        [InlineKeyboardButton("\ud83d\udc4b Default Welcome", callback_data="sa_edit:default_welcome")],
+        [InlineKeyboardButton("\ud83d\udd27 Maintenance Mode", callback_data="sa_edit:maintenance_mode")],
+        [InlineKeyboardButton("\u00ab Back", callback_data="superadmin")]
+    ])
+
+
+def tiers_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("\ud83c\udd93 Free", callback_data="sa_tier_help:free"),
+         InlineKeyboardButton("\ud83d\udc8e Premium", callback_data="sa_tier_help:premium")],
+        [InlineKeyboardButton("\ud83d\udcbc Business", callback_data="sa_tier_help:business")],
+        [InlineKeyboardButton("\u00ab Back", callback_data="superadmin")]
+    ])
 
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle all admin panel callbacks."""
     query = update.callback_query
     data = query.data
     user = update.effective_user
@@ -37,8 +58,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         await query.message.edit_text(
             "\ud83d\udd10 <b>Superadmin Panel</b>\n\nSelect an option:",
-            parse_mode="HTML",
-            reply_markup=admin_panel_kb()
+            parse_mode="HTML", reply_markup=admin_panel_kb()
         )
 
     elif data == "sa_stats":
@@ -46,16 +66,17 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             stats = await get_global_stats()
             text = ("\ud83d\udcca <b>Platform Statistics</b>\n\n"
-                    f"\ud83d\udc65 Total Users: {format_number(stats.get('total_users', 0))}\n"
-                    f"\ud83d\udce2 Active Channels: {format_number(stats.get('total_channels', 0))}\n"
-                    f"\ud83d\udc64 Channel Owners: {format_number(stats.get('total_owners', 0))}\n\n"
-                    f"<b>Today:</b>\n"
+                    f"\ud83d\udc65 Users: {format_number(stats.get('total_users', 0))}\n"
+                    f"\ud83d\udce2 Channels: {format_number(stats.get('total_channels', 0))}\n"
+                    f"\ud83d\udc64 Owners: {format_number(stats.get('total_owners', 0))}\n"
                     f"\u23f3 Pending: {stats.get('total_pending', 0)}\n"
                     f"\u2705 Approved Today: {stats.get('approved_today', 0)}")
         except Exception as e:
-            text = f"\ud83d\udcca <b>Stats</b>\n\n\u26a0\ufe0f Error loading stats: {e}"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="admin_panel")]])
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            text = f"\ud83d\udcca <b>Stats</b>\n\n\u26a0\ufe0f Error: {e}"
+        await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("\ud83d\udd04 Refresh", callback_data="sa_stats")],
+            [InlineKeyboardButton("\u00ab Back", callback_data="superadmin")]
+        ]))
 
     elif data == "sa_users":
         await query.answer()
@@ -74,13 +95,10 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     text += f"\n... and {len(owners) - 20} more"
         except Exception as e:
             text = f"\ud83d\udc65 <b>Users</b>\n\n\u26a0\ufe0f Error: {e}"
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("\ud83d\udeab Ban User", callback_data="sa_ban"),
-             InlineKeyboardButton("\u2705 Unban User", callback_data="sa_unban")],
-            [InlineKeyboardButton("\ud83c\udfc6 Set Tier", callback_data="sa_set_tier")],
-            [InlineKeyboardButton("\u00ab Back", callback_data="admin_panel")]
-        ])
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("\ud83d\udd04 Refresh", callback_data="sa_users")],
+            [InlineKeyboardButton("\u00ab Back", callback_data="superadmin")]
+        ]))
 
     elif data == "sa_channels":
         await query.answer()
@@ -98,16 +116,14 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 for ch in channels[:20]:
                     title = html_escape(ch.get("chat_title", "?"))
                     cid = ch.get("chat_id", "?")
-                    owner = ch.get("owner_username") or ch.get("owner_id", "?")
+                    owner = ch.get("owner_username") or str(ch.get("owner_id", "?"))
                     approved = ch.get("total_approved", 0)
-                    active = "\u2705" if ch.get("is_active", True) else "\u274c"
-                    text += f"{active} <b>{title}</b>\n  ID: <code>{cid}</code> | Owner: @{owner} | \u2705 {approved}\n"
-                if len(channels) > 20:
-                    text += f"\n... and {len(channels) - 20} more"
+                    text += f"\u2022 <b>{title}</b>\n  ID: <code>{cid}</code> | Owner: {owner} | \u2705 {approved}\n"
         except Exception as e:
             text = f"\ud83d\udce2 <b>Channels</b>\n\n\u26a0\ufe0f Error: {e}"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="admin_panel")]])
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("\u00ab Back", callback_data="superadmin")]
+        ]))
 
     elif data == "sa_settings":
         await query.answer()
@@ -115,184 +131,139 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             settings = await get_all_settings()
             text = "\u2699\ufe0f <b>Platform Settings</b>\n\n"
             if not settings:
-                text += "No settings configured yet.\n\nDefault settings will be used."
+                text += "No settings configured yet."
             else:
                 for k, v in settings.items():
-                    display_v = v if len(str(v)) < 50 else str(v)[:47] + "..."
-                    text += f"\u2022 <code>{k}</code> = {html_escape(str(display_v))}\n"
-            text += "\n\nTap a setting to edit:"
+                    text += f"\u2022 <code>{k}</code> = {html_escape(str(v)[:50])}\n"
         except Exception as e:
             text = f"\u2699\ufe0f <b>Settings</b>\n\n\u26a0\ufe0f Error: {e}"
-            settings = {}
-        kb = []
-        editable = [
-            ("support_username", "\ud83d\udcac Support Username"),
-            ("welcome_text", "\ud83d\udc4b Default Welcome"),
-            ("maintenance_mode", "\ud83d\udd27 Maintenance Mode"),
-            ("max_channels_free", "\ud83d\udce2 Max Channels (Free)"),
-            ("max_channels_premium", "\ud83d\udce2 Max Channels (Premium)"),
-        ]
-        for key, label in editable:
-            kb.append([InlineKeyboardButton(label, callback_data=f"sa_edit:{key}")])
-        kb.append([InlineKeyboardButton("\u00ab Back", callback_data="admin_panel")])
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
+        await query.message.edit_text(text, parse_mode="HTML", reply_markup=settings_kb())
 
     elif data.startswith("sa_edit:"):
         key = data.split(":", 1)[1]
-        try:
-            current = await get_setting(key, "(not set)")
-        except:
-            current = "(not set)"
-        context.user_data["admin_editing"] = key
-        text = (f"\u270f\ufe0f <b>Edit Setting</b>\n\n"
-                f"Key: <code>{key}</code>\n"
-                f"Current: {html_escape(str(current))}\n\n"
-                f"Send the new value:")
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("\u274c Cancel", callback_data="sa_settings")]])
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-
-    elif data == "sa_ban":
-        context.user_data["admin_action"] = "ban"
-        text = "\ud83d\udeab <b>Ban User</b>\n\nSend the user ID to ban:"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("\u274c Cancel", callback_data="sa_users")]])
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-
-    elif data == "sa_unban":
-        context.user_data["admin_action"] = "unban"
-        text = "\u2705 <b>Unban User</b>\n\nSend the user ID to unban:"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("\u274c Cancel", callback_data="sa_users")]])
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-
-    elif data == "sa_set_tier":
-        context.user_data["admin_action"] = "set_tier"
-        text = "\ud83c\udfc6 <b>Set User Tier</b>\n\nSend: <code>user_id tier_name</code>\nExample: <code>123456 premium</code>"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("\u274c Cancel", callback_data="sa_users")]])
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        current = await get_setting(key, "(not set)")
+        context.user_data["editing_setting"] = key
+        text = (f"\u270f\ufe0f <b>Edit: {key}</b>\n\n"
+                f"Current: <code>{html_escape(str(current))}</code>\n\nSend the new value:")
+        await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("\u274c Cancel", callback_data="sa_settings")]
+        ]))
 
     elif data == "sa_broadcast":
-        context.user_data["admin_action"] = "broadcast_all"
-        text = "\ud83d\udce3 <b>Broadcast to All Users</b>\n\nSend the message to broadcast to all bot users:"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("\u274c Cancel", callback_data="admin_panel")]])
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-
-    elif data == "sa_uptime":
         await query.answer()
+        context.user_data["admin_broadcast"] = True
+        text = "\ud83d\udce3 <b>Global Broadcast</b>\n\nSend a message to ALL bot users.\nType your message now:"
+        await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("\u274c Cancel", callback_data="superadmin")]
+        ]))
+
+    elif data == "sa_system":
+        await query.answer()
+        from database.connection import Database
         try:
-            uptime_key = await get_setting("uptimerobot_api_key", "")
-            if uptime_key:
-                text = ("\ud83d\udd17 <b>UptimeRobot</b>\n\n"
-                        f"API Key: <code>{uptime_key[:8]}...{uptime_key[-4:]}</code>\n"
-                        "Status: \u2705 Connected")
+            db_ok = await Database.fetchval("SELECT 1")
+            db_status = "\u2705 Connected" if db_ok else "\u274c Error"
+        except:
+            db_status = "\u274c Disconnected"
+        text = f"\ud83d\udd27 <b>System Status</b>\n\n\ud83d\uddc4 Database: {db_status}\n\ud83e\udd16 Bot: \u2705 Running"
+        await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("\u00ab Back", callback_data="superadmin")]
+        ]))
+
+    elif data == "noop":
+        await query.answer()
+
+
+@superadmin_only
+async def admin_broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("admin_broadcast"):
+        return False
+    message = update.message
+    if message.text and message.text.startswith("/cancel"):
+        context.user_data.pop("admin_broadcast", None)
+        await message.reply_text("\u274c Broadcast cancelled.")
+        return True
+    context.user_data.pop("admin_broadcast", None)
+    user_ids = await get_all_user_ids()
+    sent = failed = 0
+    import asyncio
+    from telegram.error import Forbidden
+    status_msg = await message.reply_text(f"\ud83d\udce3 Broadcasting to {len(user_ids)} users...")
+    for uid in user_ids:
+        try:
+            if message.photo:
+                await context.bot.send_photo(uid, message.photo[-1].file_id, caption=message.caption, parse_mode="HTML")
+            elif message.video:
+                await context.bot.send_video(uid, message.video.file_id, caption=message.caption, parse_mode="HTML")
             else:
-                text = ("\ud83d\udd17 <b>UptimeRobot</b>\n\n"
-                        "No API key set.\n"
-                        "Set it in Settings \u2192 uptimerobot_api_key")
-        except Exception as e:
-            text = f"\ud83d\udd17 <b>UptimeRobot</b>\n\n\u26a0\ufe0f Error: {e}"
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("\ud83d\udd11 Set API Key", callback_data="sa_edit:uptimerobot_api_key")],
-            [InlineKeyboardButton("\u00ab Back", callback_data="admin_panel")]
-        ])
-        await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+                await context.bot.send_message(uid, message.text, parse_mode="HTML")
+            sent += 1
+        except Forbidden:
+            failed += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+    await status_msg.edit_text(f"\u2705 Broadcast complete!\n\ud83d\udce8 Sent: {sent}\n\u274c Failed: {failed}")
+    return True
 
 
-async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    user = update.effective_user
+@superadmin_only
+async def admin_setting_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    key = context.user_data.get("editing_setting")
+    if not key:
+        return False
+    message = update.message
+    if message.text and message.text.startswith("/cancel"):
+        context.user_data.pop("editing_setting", None)
+        await message.reply_text("\u274c Cancelled.")
+        return True
+    value = message.text.strip() if message.text else ""
+    await set_setting(key, value)
+    context.user_data.pop("editing_setting", None)
+    await message.reply_text(f"\u2705 Setting <b>{key}</b> updated to: <code>{html_escape(value)}</code>", parse_mode="HTML")
+    return True
+
+
+async def admin_ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import Config
-    if user.id not in Config.SUPERADMIN_IDS:
-        return False
+    if update.effective_user.id not in Config.SUPERADMIN_IDS:
+        return await update.message.reply_text("\u26d4 Superadmin only.")
+    if not context.args:
+        return await update.message.reply_text("Usage: /ban {user_id}")
+    try:
+        uid = int(context.args[0])
+        await ban_user(uid)
+        await update.message.reply_text(f"\ud83d\udeab User {uid} banned.")
+    except ValueError:
+        await update.message.reply_text("Invalid user ID.")
 
-    editing_key = context.user_data.get("admin_editing")
-    if editing_key:
-        new_value = update.message.text.strip()
-        try:
-            await set_setting(editing_key, new_value)
-            await update.message.reply_text(
-                f"\u2705 Setting updated!\n\n<code>{editing_key}</code> = {html_escape(new_value)}",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Settings", callback_data="sa_settings")]])
-            )
-        except Exception as e:
-            await update.message.reply_text(f"\u26a0\ufe0f Error: {e}")
-        context.user_data.pop("admin_editing", None)
-        return True
 
-    action = context.user_data.get("admin_action")
-    if not action:
-        return False
+async def admin_unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from config import Config
+    if update.effective_user.id not in Config.SUPERADMIN_IDS:
+        return await update.message.reply_text("\u26d4 Superadmin only.")
+    if not context.args:
+        return await update.message.reply_text("Usage: /unban {user_id}")
+    try:
+        uid = int(context.args[0])
+        await unban_user(uid)
+        await update.message.reply_text(f"\u2705 User {uid} unbanned.")
+    except ValueError:
+        await update.message.reply_text("Invalid user ID.")
 
-    text = update.message.text.strip()
 
-    if action == "ban":
-        try:
-            uid = int(text)
-            await ban_user(uid)
-            await update.message.reply_text(f"\ud83d\udeab User {uid} banned.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Users", callback_data="sa_users")]]))
-        except ValueError:
-            await update.message.reply_text("\u26a0\ufe0f Invalid user ID.")
-        except Exception as e:
-            await update.message.reply_text(f"\u26a0\ufe0f Error: {e}")
-        context.user_data.pop("admin_action", None)
-        return True
-
-    elif action == "unban":
-        try:
-            uid = int(text)
-            await unban_user(uid)
-            await update.message.reply_text(f"\u2705 User {uid} unbanned.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Users", callback_data="sa_users")]]))
-        except ValueError:
-            await update.message.reply_text("\u26a0\ufe0f Invalid user ID.")
-        except Exception as e:
-            await update.message.reply_text(f"\u26a0\ufe0f Error: {e}")
-        context.user_data.pop("admin_action", None)
-        return True
-
-    elif action == "set_tier":
-        parts = text.split()
-        if len(parts) != 2:
-            await update.message.reply_text("\u26a0\ufe0f Format: <code>user_id tier</code>", parse_mode="HTML")
-            return True
-        try:
-            uid = int(parts[0])
-            tier = parts[1].lower()
-            if tier not in ("free", "basic", "premium", "business"):
-                await update.message.reply_text("\u26a0\ufe0f Valid tiers: free, basic, premium, business")
-                return True
-            await set_user_tier(uid, tier)
-            await update.message.reply_text(f"\ud83c\udfc6 User {uid} tier set to {tier}.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Users", callback_data="sa_users")]]))
-        except ValueError:
-            await update.message.reply_text("\u26a0\ufe0f Invalid user ID.")
-        except Exception as e:
-            await update.message.reply_text(f"\u26a0\ufe0f Error: {e}")
-        context.user_data.pop("admin_action", None)
-        return True
-
-    elif action == "broadcast_all":
-        context.user_data.pop("admin_action", None)
-        try:
-            import asyncio
-            user_ids = await get_all_user_ids()
-            status_msg = await update.message.reply_text(f"\ud83d\udce3 Broadcasting to {len(user_ids)} users...")
-            sent = 0
-            failed = 0
-            for uid in user_ids:
-                try:
-                    await context.bot.send_message(uid, text, parse_mode="HTML")
-                    sent += 1
-                except Exception:
-                    failed += 1
-                if (sent + failed) % 50 == 0:
-                    try:
-                        await status_msg.edit_text(f"\ud83d\udce3 Broadcasting... {sent}/{len(user_ids)}")
-                    except:
-                        pass
-                    await asyncio.sleep(1)
-            await status_msg.edit_text(f"\ud83d\udce3 Broadcast complete!\n\u2705 Sent: {sent}\n\u274c Failed: {failed}")
-        except Exception as e:
-            await update.message.reply_text(f"\u26a0\ufe0f Error: {e}")
-        return True
-
-    return False
+async def admin_set_tier_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from config import Config
+    if update.effective_user.id not in Config.SUPERADMIN_IDS:
+        return await update.message.reply_text("\u26d4 Superadmin only.")
+    if len(context.args) < 2:
+        return await update.message.reply_text("Usage: /settier {user_id} {free|premium|business}")
+    try:
+        uid = int(context.args[0])
+        tier = context.args[1].lower()
+        if tier not in ("free", "premium", "business"):
+            return await update.message.reply_text("Tier must be: free, premium, or business")
+        await set_user_tier(uid, tier)
+        await update.message.reply_text(f"\u2705 User {uid} tier set to {tier}.")
+    except ValueError:
+        await update.message.reply_text("Invalid user ID.")
