@@ -53,9 +53,9 @@ def main():
         .build()
     )
 
-    # --------------------------------------
+    # ──────────────────────────────────────
     # Command handlers
-    # --------------------------------------
+    # ──────────────────────────────────────
     from handlers.start import start_command
     from handlers.help import help_command
     from handlers.settings import settings_command
@@ -70,30 +70,30 @@ def main():
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("export", export_command))
 
-    # --------------------------------------
+    # ──────────────────────────────────────
     # Callback query handler (single router)
-    # --------------------------------------
-    from handlers.callbacks import callback_router
-    app.add_handler(CallbackQueryHandler(callback_router))
+    # ──────────────────────────────────────
+    from handlers.callbacks import button_callback
+    app.add_handler(CallbackQueryHandler(button_callback))
 
-    # --------------------------------------
+    # ──────────────────────────────────────
     # Chat join request handler
-    # --------------------------------------
+    # ──────────────────────────────────────
     from handlers.join_request import handle_join_request
     app.add_handler(ChatJoinRequestHandler(handle_join_request))
 
-    # --------------------------------------
+    # ──────────────────────────────────────
     # Chat member updates (detect bot added/removed from channels)
-    # --------------------------------------
+    # ──────────────────────────────────────
     from handlers.channel_detection import handle_my_chat_member
     app.add_handler(ChatMemberHandler(
         handle_my_chat_member,
         chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER
     ))
 
-    # --------------------------------------
+    # ──────────────────────────────────────
     # Message handlers for multi-step flows
-    # --------------------------------------
+    # ──────────────────────────────────────
     from handlers.clone import handle_clone_url
     from handlers.welcome import handle_welcome_text
     from handlers.broadcast import handle_broadcast_content
