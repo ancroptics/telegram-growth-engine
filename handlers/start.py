@@ -45,7 +45,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
-    await query.answer()
     try:
         from database.models import get_owner_channels, get_referral_stats, get_owner_tier
         from utils.helpers import format_number
@@ -67,40 +66,42 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text("\u26a0\ufe0f Database unavailable. Try again later.", parse_mode="HTML", reply_markup=main_menu_kb(is_admin=user.id in Config.SUPERADMIN_IDS))
 
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show support info."""
+    """Show support info with dynamic username from DB."""
     query = update.callback_query
-    await query.answer()
     from utils.keyboards import back_kb
-    text = ("\U0001f4ac <b>Support</b>\n\n"
-            "Need help? Here\'s how to get support:\n\n"
-            "\U0001f4e7 Contact: @ancroptics\n"
-            "\U0001f4d6 Use /help for setup guide\n"
-            "\U0001f41b Report bugs to the admin\n\n"
-            "<b>Common Issues:</b>\n"
-            "\u2022 Bot not approving? Make sure it\'s admin with \'Invite Users\' permission\n"
-            "\u2022 No welcome DM? User must have started the bot first\n"
-            "\u2022 Force sub not working? Check channel usernames are set")
+    try:
+        from database.models import get_setting
+        support_user = await get_setting("support_username", "ancroptics")
+    except:
+        support_user = "ancroptics"
+    text = (f"\U0001f4ac <b>Support</b>\n\n"
+            f"Need help? Here's how to get support:\n\n"
+            f"\U0001f4e7 Contact: @{support_user}\n"
+            f"\U0001f4d6 Use /help for setup guide\n"
+            f"\U0001f41b Report bugs to the admin\n\n"
+            f"<b>Common Issues:</b>\n"
+            f"\u2022 Bot not approving? Make sure it's admin with 'Invite Users' permission\n"
+            f"\u2022 No welcome DM? User must have started the bot first\n"
+            f"\u2022 Force sub not working? Check channel usernames are set")
     await query.message.edit_text(text, parse_mode="HTML", reply_markup=back_kb())
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = ("\U0001f4d6 <b>HELP</b>\n\n"
             "<b>Setup:</b>\n"
             "1. Add bot as admin to your channel\n"
-            "2. Enable \'Approve New Members\' in channel settings\n"
+            "2. Enable 'Approve New Members' in channel settings\n"
             "3. The bot handles the rest!\n\n"
             "<b>Commands:</b>\n"
             "/start - Main menu\n"
             "/dashboard - Channel dashboard\n"
             "/referral - Your referral link\n"
             "/stats - Your stats\n"
-            "/premium - Upgrade info\n"
             "/help - This message\n\n"
             "<b>Channel Owner:</b>\n"
-            "/broadcast - Send to all users\n"
-            "/newtemplate - Create DM template\n"
-            "/autopost - Set up auto-poster\n"
             "/setdrip {id} {rate} {start} {end}\n"
-            "/clone {bot_token} - Clone bot")
+            "/newtemplate {name} - Create DM template\n"
+            "/deltemplate {name} - Delete template\n"
+            "/autopost {group_id} {interval_min}")
     await update.message.reply_text(text, parse_mode="HTML")
 
 async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
