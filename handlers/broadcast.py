@@ -14,17 +14,17 @@ async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAUL
     if data == "broadcast_menu":
         channels = await get_owner_channels(user_id)
         if not channels:
-            await query.message.edit_text("\ud83d\udce2 No channels. Add me to a channel first!",
+            await query.message.edit_text("\U0001f4e2 No channels. Add me to a channel first!",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]]))
             return
         buttons = [[InlineKeyboardButton(ch.get("chat_title", "?")[:30], callback_data=f"bc_ch:{ch['chat_id']}")] for ch in channels]
         buttons.append([InlineKeyboardButton("\u00ab Back", callback_data="main_menu")])
-        await query.message.edit_text("\ud83d\udce2 <b>Broadcast</b>\nSelect a channel:", parse_mode="HTML",
+        await query.message.edit_text("\U0001f4e2 <b>Broadcast</b>\nSelect a channel:", parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("bc_ch:"):
         chat_id = int(data.split(":")[1])
         context.user_data["bc_setup"] = {"channel_id": chat_id}
-        await query.message.edit_text("\ud83d\udce2 Send the broadcast message (text, photo, or video):",
+        await query.message.edit_text("\U0001f4e2 Send the broadcast message (text, photo, or video):",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u274c Cancel", callback_data="broadcast_menu")]]))
     elif data.startswith("bc_send:"):
         bc_id = int(data.split(":")[1])
@@ -49,7 +49,7 @@ async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAUL
                 else:
                     failed += 1
         await update_broadcast_progress(bc_id, sent, failed, blocked, "completed")
-        await query.message.edit_text(f"\ud83d\udce2 Broadcast complete!\n\u2705 Sent: {sent}\n\u274c Failed: {failed}\n\ud83d\udeab Blocked: {blocked}")
+        await query.message.edit_text(f"\U0001f4e2 Broadcast complete!\n\u2705 Sent: {sent}\n\u274c Failed: {failed}\n\U0001f6ab Blocked: {blocked}")
 
 
 async def broadcast_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -67,7 +67,7 @@ async def broadcast_message_handler(update: Update, context: ContextTypes.DEFAUL
         bc_id = await create_broadcast(owner_id, channel_id, "text", content=msg.text)
     recipients = await get_broadcast_recipients(owner_id, channel_id)
     buttons = [
-        [InlineKeyboardButton(f"\ud83d\udce4 Send to {len(recipients)} users", callback_data=f"bc_send:{bc_id}")],
+        [InlineKeyboardButton(f"\U0001f4e4 Send to {len(recipients)} users", callback_data=f"bc_send:{bc_id}")],
         [InlineKeyboardButton("\u274c Cancel", callback_data="broadcast_menu")],
     ]
-    await msg.reply_text(f"\ud83d\udce2 Broadcast ready! Target: {len(recipients)} users.", reply_markup=InlineKeyboardMarkup(buttons))
+    await msg.reply_text(f"\U0001f4e2 Broadcast ready! Target: {len(recipients)} users.", reply_markup=InlineKeyboardMarkup(buttons))
