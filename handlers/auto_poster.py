@@ -1,3 +1,4 @@
+from html import escape as html_escape
 """Auto-poster management."""
 import logging
 from telegram import Update
@@ -26,14 +27,14 @@ async def handle_auto_poster_callback(update: Update, context: ContextTypes.DEFA
         else:
             text = "🤖 <b>Auto Poster — Groups</b>\n\n"
             for g in groups:
-                text += f"• {g.get('chat_title', '?')} (ID: {g['chat_id']})\n"
-            text += "\nUse /autopost <group_id> <interval_min> to create a schedule.\nThen send the content."
+                text += f"• {html_escape(g.get('chat_title', '?'))} (ID: {g['chat_id']})\n"
+            text += "\nUse /autopost {group_id} {interval_min} to create a schedule.\nThen send the content."
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=back_kb())
 
 async def autopost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args or len(args) < 2:
-        await update.message.reply_text("Usage: /autopost <group_chat_id> <interval_minutes>")
+        await update.message.reply_text("Usage: /autopost {group_chat_id} {interval_minutes}")
         return
     try:
         group_id = int(args[0])
