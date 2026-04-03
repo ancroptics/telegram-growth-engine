@@ -14,7 +14,7 @@ async def new_template_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     name = args[0]
     context.user_data["creating_template"] = name
-    await update.message.reply_text(f"\ud83d\udccb Creating template \"{name}\". Send the content now (text, photo, or video):")
+    await update.message.reply_text(f"Creating template \"{name}\". Send the content now:")
 
 
 async def del_template_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -23,7 +23,7 @@ async def del_template_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /deltemplate <name>")
         return
     await delete_template(update.effective_user.id, args[0])
-    await update.message.reply_text(f"\u2705 Template \"{args[0]}\" deleted.")
+    await update.message.reply_text(f"Template \"{args[0]}\" deleted.")
 
 
 async def template_content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -39,7 +39,7 @@ async def template_content_handler(update: Update, context: ContextTypes.DEFAULT
         await save_template(msg.from_user.id, name, "document", media_file_id=msg.document.file_id, caption=msg.caption)
     else:
         await save_template(msg.from_user.id, name, "text", content=msg.text)
-    await msg.reply_text(f"\u2705 Template \"{name}\" saved!")
+    await msg.reply_text(f"Template \"{name}\" saved!")
 
 
 async def handle_template_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -49,11 +49,11 @@ async def handle_template_callback(update: Update, context: ContextTypes.DEFAULT
     if data in ("template_settings", "templates_list"):
         templates = await get_templates(user_id)
         if not templates:
-            await query.message.edit_text("\ud83d\udccb No templates yet. Use /newtemplate <name> to create one.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]]))
+            await query.message.edit_text("No templates yet. Use /newtemplate <name> to create one.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="main_menu")]]))
             return
-        text = "\ud83d\udccb <b>Your Templates</b>\n\n"
+        text = "<b>Your Templates</b>\n\n"
         for t in templates:
-            text += f"\u2022 <b>{t.get('name', '?')}</b> ({t.get('content_type', '?')})\n"
+            text += f"- <b>{t.get('name', '?')}</b> ({t.get('content_type', '?')})\n"
         await query.message.edit_text(text, parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]]))
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="main_menu")]]))
