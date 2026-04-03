@@ -27,7 +27,7 @@ async def handle_clone_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 text += f"  {status} @{c.get('bot_username','?')}\n"
         else:
             text += "No clones yet.\n"
-        text += "\nTo create a clone:\n1. Create a bot via @BotFather\n2. Send /clone <bot_token>"
+        text += "\nTo create a clone:\n1. Create a bot via @BotFather\n2. Send /clone {bot_token}"
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=clone_kb())
 
     elif data == "clone_add":
@@ -44,7 +44,7 @@ async def handle_clone_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not context.args:
-        await update.message.reply_text("Usage: /clone <bot_token>")
+        await update.message.reply_text("Usage: /clone {bot_token}")
         return
     token = context.args[0].strip()
     tier = await get_owner_tier(user.id)
