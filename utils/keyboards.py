@@ -91,5 +91,27 @@ def admin_panel_kb():
         [InlineKeyboardButton("\u00ab Back", callback_data="main_menu")],
     ])
 
+def premium_upgrade_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("\ud83d\udc8e Buy Premium", callback_data="premium_buy:premium")],
+        [InlineKeyboardButton("\ud83d\udcbc Buy Business", callback_data="premium_buy:business")],
+        [InlineKeyboardButton("\u00ab Back", callback_data="main_menu")],
+    ])
+
+def category_kb(chat_id, categories=None):
+    from utils.constants import CATEGORIES
+    cats = categories or CATEGORIES
+    kb = []
+    row = []
+    for cat in cats:
+        row.append(InlineKeyboardButton(cat, callback_data=f"cp_cat:{chat_id}:{cat}"))
+        if len(row) == 2:
+            kb.append(row)
+            row = []
+    if row:
+        kb.append(row)
+    kb.append([InlineKeyboardButton("\u00ab Back", callback_data=f"manage_ch:{chat_id}")])
+    return InlineKeyboardMarkup(kb)
+
 def back_kb(target="main_menu"):
     return InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data=target)]])
