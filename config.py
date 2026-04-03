@@ -1,34 +1,52 @@
-"""Bot configuration from environment variables."""
+"""Application configuration from environment variables."""
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 class Config:
+    # Bot
     BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-    DATABASE_URL = os.getenv("DATABASE_URL", "")
-    SUPERADMIN_IDS = [
-        int(x.strip()) for x in os.getenv("SUPERADMIN_IDS", "").split(",")
+    BOT_USERNAME = os.getenv("BOT_USERNAME", "Botofall_robot")
+
+    # MongoDB
+    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+    MONGO_DB = os.getenv("MONGO_DB", "telegram_growth")
+
+    # Admin
+    ADMIN_IDS = [
+        int(x.strip())
+        for x in os.getenv("ADMIN_IDS", "").split(",")
         if x.strip().isdigit()
     ]
-    PORT = int(os.getenv("PORT", "10000"))
-    USE_WEBHOOK = os.getenv("USE_WEBHOOK", "false").lower() == "true"
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
-    DEFAULT_REFERRAL_COINS = int(os.getenv("DEFAULT_REFERRAL_COINS", "10"))
-    PREMIUM_PRICE_MONTHLY = int(os.getenv("PREMIUM_PRICE_MONTHLY", "199"))
-    BUSINESS_PRICE_MONTHLY = int(os.getenv("BUSINESS_PRICE_MONTHLY", "499"))
+    SUPER_ADMIN_IDS = [
+        int(x.strip())
+        for x in os.getenv("SUPEP_ADMIN_IDS", "").split(",")
+        if x.strip().isdigit()
+    ]
+
+    # Logging
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-    
-    # Rate limiting
-    RATE_LIMIT_MESSAGES = int(os.getenv("RATE_LIMIT_MESSAGES", "30"))
-    RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))
-    
-    # Clone settings
-    MAX_CLONES_FREE = int(os.getenv("MAX_CLONES_FREE", "1"))
-    MAX_CLONES_PREMIUM = int(os.getenv("MAX_CLONES_PREMIUM", "5"))
-    MAX_CLONES_BUSINESS = int(os.getenv("MAX_CLONES_BUSINESS", "20"))
+
+    # Rate Limiting
+    RATE_LIMIT = int(os.getenv("RATE_LIMIT", "30"))
+    RATE_WINDOW = int(os.getenv("RATE_WINDOW", "60"))
+
+    # Premium
+    PREMIUM_ENABLED = os.getenv("PREMIUM_ENABLED", "false").lower() == "true"
+    PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
+
+    # Feature Flags
+    MAX_CHANNELS_FREE = int(os.getenv("MAX_CHANNELS_FREE", "3"))
+    MAX_CHANNELS_PREMIUM = int(os.getenv("MAX_CHANNELS_PREMIUM", "20"))
+    DRIP_INTERVAL_HOURS = int(os.getenv("DRIP_INTERVAL_HOURS", "24"))
+    CLONE_ENABLED = os.getenv("CLONE_ENABLED", "true").lower() == "true"
 
     @classmethod
     def validate(cls):
         if not cls.BOT_TOKEN:
             raise ValueError("BOT_TOKEN is required")
-        if not cls.DATABASE_URL:
-            raise ValueError("DATABASE_URL is required")
+        if not cls.MONGO_URI:
+            raise ValueError("MONGO_URI is required")
         return True
