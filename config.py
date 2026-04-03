@@ -5,7 +5,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    BOT_TOKEN = os.getenv("BOT_TOKEN", "") or "8196680231:AAER9EAE3l2GAAFdnJ77ROm3K-y4Wf37nwE"
+    # Token hardcoded after regeneration - update BOT_TOKEN env var on Render to match
+    BOT_TOKEN = "8196680231:AAER9EAE2l2GAAFdnJ77ROm3K-y4Wf37nwE"
     DATABASE_URL = os.getenv("DATABASE_URL", "")
     SUPERADMIN_IDS = [int(x.strip()) for x in os.getenv("SUPERADMIN_IDS", "0").split(",") if x.strip().isdigit()]
     ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "0").split(",") if x.strip().isdigit()]
