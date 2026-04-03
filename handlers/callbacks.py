@@ -1,4 +1,4 @@
-"""Callback query handler for inline keyboard buttons."""
+"""Callback query router."""
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -6,93 +6,115 @@ from telegram.ext import ContextTypes
 logger = logging.getLogger(__name__)
 
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Route callback queries to appropriate handlers."""
+async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Route ALL callback queries to the appropriate handler."""
     query = update.callback_query
-    
+    data = query.data or ""
+
     try:
         await query.answer()
-    except Exception as e:
-        logger.warning(f"Failed to answer callback query: {e}")
-    
-    data = query.data
-    
+    except Exception:
+        pass
+
     try:
-        if data == "admin_panel":
-            from handlers.admin_panel import show_admin_panel
-            await show_admin_panel(update, context)
-        
-        elif data == "force_sub_settings":
-            from handlers.force_subscribe import show_force_sub_settings
-            await show_force_sub_settings(update, context)
-        
-        elif data == "broadcast_menu":
-            from handlers.broadcast import show_broadcast_menu
-            await show_broadcast_menu(update, context)
-        
-        elif data == "analytics":
-            from handlers.analytics_view import show_analytics
-            await show_analytics(update, context)
-        
-        elif data == "channel_settings":
-            from handlers.channel_settings import show_channel_settings
-            await show_channel_settings(update, context)
-        
-        elif data == "template_settings":
-            from handlers.template_mgmt import show_template_settings
-            await show_template_settings(update, context)
-        
-        elif data == "language_settings":
-            from handlers.language_mgmt import show_language_settings
-            await show_language_settings(update, context)
-        
-        elif data == "clone_bot":
-            from handlers.clone_bot import show_clone_menu
-            await show_clone_menu(update, context)
-        
-        elif data == "premium_info":
-            from handlers.premium import show_premium_info
-            await show_premium_info(update, context)
-        
-        elif data == "user_management":
-            from handlers.user_mgmt import show_user_management
-            await show_user_management(update, context)
-        
-        elif data == "cross_promo":
-            from handlers.cross_promo import show_cross_promo
-            await show_cross_promo(update, context)
-        
-        elif data == "batch_approve":
-            from handlers.batch_approve import show_batch_approve
-            await show_batch_approve(update, context)
-        
-        elif data.startswith("approve_"):
-            from handlers.join_request import approve_request_callback
-            await approve_request_callback(update, context)
-        
-        elif data == "back_to_main":
-            from handlers.start import send_main_menu
-            await send_main_menu(update, context, edit=True)
-        
-        elif data == "back_to_admin":
-            from handlers.admin_panel import show_admin_panel
-            await show_admin_panel(update, context)
-        
-        elif data == "close":
+        # Navigation
+        if data in ("back_to_main", "main_menu"):
+            from handlers.start import show_main_menu
+            return await show_main_menu(update, context)
+
+        if data == "support":
+            from handlers.start import show_support
+            return await show_support(update, context)
+
+        # Channel management
+        if data in ("my_channels", "add_channel") or data.startswith(("manage_ch:", "ch_settings:", "ch_toggle:", "ch_delete:", "ch_confirm_delete:", "ch_pending:", "ch_export:", "ch_i18n:", "ch_cross_promo:")):
+            from handlers.channel_settings import handle_channel_callback
+            return await handle_channel_callback(update, context)
+
+        # Welcome DM
+        if data.startswith("ch_edit_welcome:") or data.startswith("welcome_"):
+            from handlers.welcome_dm import handle_welcome_dm_callback
+            return await handle_welcome_dm_callback(update, context)
+
+        # Broadcast
+        if data in ("broadcast_menu",) or data.startswith("bc_"):
+            from handlers.broadcast import handle_broadcast_callback
+            return await handle_broadcast_callback(update, context)
+
+        # Template
+        if data in ("template_settings", "templates_list") or data.startswith("tmpl_"):
+            from handlers.template_mgmt import handle_template_callback
+            return await handle_template_callback(update, context)
+
+        # Admin / Superadmin panel
+        if data in ("admin_panel", "superadmin") or data.startswith(("admin_", "sa_")):
+            from handlers.admin_panel import handle_admin_callback
+            return await handle_admin_callback(update, context)
+
+        # Premium
+        if data in ("premium_info",) or data.startswith(("prem_", "premium_")):
+            from handlers.premium import handle_premium_callback
+            return await handle_premium_callback(update, context)
+
+        # Clone bot
+        if data in ("clone_bot", "clone_list") or data.startswith("clone_"):
+            from handlers.clone_bot import handle_clone_callback
+            return await handle_clone_callback(update, context)
+
+        # Analytics
+        if data in ("analytics", "analytics_overview") or data.startswith(("analytics_", "ch_analytics:")):
+            from handlers.analytics_view import handle_analytics_callback
+            return await handle_analytics_callback(update, context)
+
+        # Force subscribe
+        if data.startswith(("fs_verify:", "fs_toggle:", "fs_add:", "ch_force_sub:")):
+            from handlers.force_subscribe import handle_force_sub_callback
+            return await handle_force_sub_callback(update, context)
+
+        # Batch approve / Drip
+        if data.startswith(("batch_", "drip_")):
+            from handlers.batch_approve import handle_batch_callback
+            return await handle_batch_callback(update, context)
+
+        # Cross promo
+        if data in ("cross_promo",) or data.startswith(("xp_", "cp_cat:")):
+            from handlers.cross_promo import handle_cross_promo_callback
+            return await handle_cross_promo_callback(update, context)
+
+        # Auto poster
+        if data in ("auto_poster",) or data.startswith("ap_"):
+            from handlers.auto_poster import handle_auto_poster_callback
+            return await handle_auto_poster_callback(update, context)
+
+        # User management
+        if data in ("user_mgmt",) or data.startswith("um_"):
+            from handlers.user_mgmt import handle_user_mgmt_callback
+            return await handle_user_mgmt_callback(update, context)
+
+        # Language
+        if data.startswith("lang_"):
+            from handlers.language_mgmt import handle_language_callback
+            return await handle_language_callback(update, context)
+
+        # Close
+        if data == "close":
             try:
                 await query.message.delete()
             except Exception:
                 pass
-        
-        else:
-            logger.warning(f"Unknown callback data: {data}")
-            await query.message.reply_text("\u26a0\ufe0f Unknown action. Please try again.")
-    
-    except Exception as e:
-        logger.error(f"Error handling callback \"{data}\": {e}", exc_info=True)
+            return
+
+        logger.warning(f"Unhandled callback: {data}")
+
+    except ImportError as e:
+        logger.error(f"Handler import error for '{data}': {e}")
         try:
-            await query.message.reply_text(
-                "\u26a0\ufe0f An error occurred. Please try again or use /start."
-            )
+            await query.message.reply_text("\u26a0\ufe0f Feature not available yet.")
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"Callback error '{data}': {e}", exc_info=True)
+        try:
+            await query.message.reply_text("\u26a0\ufe0f Error occurred. Try /start.")
         except Exception:
             pass
