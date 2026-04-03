@@ -1,6 +1,6 @@
 """Bot cloning (multi-bot)."""
 import logging
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import ContextTypes
 from database.models import get_cloned_bots, create_clone_bot, delete_clone_bot, get_owner_tier
 from utils.keyboards import clone_kb, back_kb
@@ -18,7 +18,7 @@ async def handle_clone_callback(update: Update, context: ContextTypes.DEFAULT_TY
         tier = await get_owner_tier(user.id)
         max_clones = TIER_LIMITS.get(tier, {}).get("max_clones", 0)
         clones = await get_cloned_bots(user.id)
-        text = (f"\ud83e\udd16 <b>Bot Clones</b>\n\n"
+        text = (f"\U0001f916 <b>Bot Clones</b>\n\n"
                 f"Tier: {tier.capitalize()} (max {max_clones} clones)\n"
                 f"Active: {len(clones)}/{max_clones}\n\n")
         if clones:
@@ -32,7 +32,7 @@ async def handle_clone_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data == "clone_add":
         context.user_data["adding_clone"] = True
-        await query.message.edit_text("\ud83e\udd16 Send the bot token from @BotFather.\n/cancel to abort", parse_mode="HTML")
+        await query.message.edit_text("\U0001f916 Send the bot token from @BotFather.\n/cancel to abort", parse_mode="HTML")
 
     elif data.startswith("clone_delete:"):
         clone_id = int(data.split(":")[1])
@@ -50,25 +50,35 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tier = await get_owner_tier(user.id)
     max_clones = TIER_LIMITS.get(tier, {}).get("max_clones", 0)
     if max_clones <= 0:
-        await update.message.reply_text("\ud83d\udc8e Cloning requires Premium. Use /premium")
+        await update.message.reply_text("\U0001f48e Cloning requires Premium. Use /premium")
         return
     clones = await get_cloned_bots(user.id)
     if len(clones) >= max_clones:
         await update.message.reply_text(f"\u274c Clone limit reached ({max_clones}).")
         return
-    # Validate token
-    from telegram import Bot
+    # Validate token using httpx directly (avoids PTB Bot initialization issues)
+    import httpx
     try:
-        test_bot = Bot(token=token)
-        bot_info = await test_bot.get_me()
-    except Exception:
-        await update.message.reply_text("\u274c Invalid token.")
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"https://api.telegram.org/bot{token}/getMe")
+            resp.raise_for_status()
+            data = resp.json()
+            if not data.get("ok"):
+                raise ValueError("Invalid token")
+            bot_info = data["result"]
+            bot_username = bot_info.get("username", "unknown")
+            bot_name = bot_info.get("first_name", "Clone Bot")
+    except Exception as e:
+        logger.error(f"Clone token validation failed: {e}")
+        await update.message.reply_text("\u274c Invalid bot token. Make sure you copied it correctly from @BotFather.")
         return
-    clone_id = await create_clone_bot(user.id, token, bot_info.username, bot_info.first_name)
+    clone_id = await create_clone_bot(user.id, token, bot_username, bot_name)
     await update.message.reply_text(
         f"\u2705 Clone created!\n\n"
-        f"Bot: @{bot_info.username}\n"
-        f"Note: Clone bots run independently. Start them with /startclone {clone_id}"
+        f"Bot: @{bot_username}\n"
+        f"Clone ID: {clone_id}\n\n"
+        f"Note: The clone bot mirrors your channel settings. "
+        f"Add it as admin to your channels to use it."
     )
 
 async def clone_token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
