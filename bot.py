@@ -101,6 +101,18 @@ async def media_router(update, context):
             logger.error(f"Media handler error: {e}")
 
 
+async def error_handler(update, context):
+    """Global error handler - log errors but don't crash the bot."""
+    logger.error(f"Unhandled exception: {context.error}", exc_info=context.error)
+    try:
+        if update and update.callback_query:
+            await update.callback_query.answer("\u26a0\ufe0f Something went wrong. Try again.", show_alert=True)
+        elif update and update.message:
+            await update.message.reply_text("\u26a0\ufe0f Something went wrong. Try again.")
+    except Exception:
+        pass
+
+
 def main():
     logger.info("Starting Telegram Growth Engine v3.1")
     if not Config.BOT_TOKEN:
@@ -112,6 +124,7 @@ def main():
     app = ApplicationBuilder().token(Config.BOT_TOKEN).post_init(post_init).build()
     setup_handlers(app)
     logger.info("Starting bot polling...")
+    app.add_error_handler(error_handler)
     app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query", "chat_join_request", "my_chat_member"])
 
 
