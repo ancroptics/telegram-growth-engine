@@ -23,16 +23,11 @@ async def post_init(app):
         await start_health_server()
     except Exception as e:
         logger.error(f"Health server failed: {e}")
-
     try:
-        db = Database()
-        await db.initialize()
-        app.bot_data['db'] = db
-        logger.info("Database initialized successfully")
+        await Database.get_pool()
+        logger.info("Database connection verified")
     except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        sys.exit(1)
-
+        logger.error(f"Database connection check failed: {e}")
     try:
         setup_scheduler(app)
     except Exception as e:
@@ -40,88 +35,39 @@ async def post_init(app):
 
 
 async def post_shutdown(app):
-    db = app.bot_data.get('db')
-    if db:
-        await db.close()
+    await Database.close()
 
 
 def main():
+    Config.validate()
     app = (
-        ApplicationBuilder.token(Config.BOT_TOKEN)
+        ApplicationBuilder()
+        .token(Config.BOT_TOKEN)
         .post_init(post_init)
         .post_shutdown(post_shutdown)
         .build()
     )
-
-    # ──────────────────────────────────────
-    # Command handlers
-    # ──────────────────────────────────────
-    from handlers.start import start_command
-    from handlers.help import help_command
-    from handlers.settings import settings_command
-    from handlers.stats import stats_command
-    from handlers.broadcast import broadcast_command
-    from handlers.export_data import export_command
-
+    from handlers.start import start_command, help_command, dashboard_command
+    from handlers.user_commands import referral_command, stats_command
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("settings", settings_command))
+    app.add_handler(CommandHandler("dashboard", dashboard_command))
+    app.add_handler(CommandHandler("referral", referral_command))
     app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("broadcast", broadcast_command))
-    app.add_handler(CommandHandler("export", export_command))
-
-    # ──────────────────────────────────────
-    # Callback query handler (single router)
-    # ──────────────────────────────────────
-    from handlers.callbacks import button_callback
-    app.add_handler(CallbackQueryHandler(button_callback))
-
-    # ──────────────────────────────────────
-    # Chat join request handler
-    # ──────────────────────────────────────
-    from handlers.join_request import handle_join_request
-    app.add_handler(ChatJoinRequestHandler(handle_join_request))
-
-    # ──────────────────────────────────────
-    # Chat member updates (detect bot added/removed from channels)
-    # ──────────────────────────────────────
-    from handlers.channel_detection import handle_my_chat_member
-    app.add_handler(ChatMemberHandler(
-        handle_my_chat_member,
-        chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER
-    ))
-
-    # ──────────────────────────────────────
-    # Message handlers for multi-step flows
-    # ──────────────────────────────────────
-    from handlers.clone import handle_clone_url
-    from handlers.welcome import handle_welcome_text
-    from handlers.broadcast import handle_broadcast_content
-
-    app.add_handler(MessageHandler(
-        handle_clone_url,
-        filters.TEXT & filters.Regex(r'https?://(t\.me|telegram\.me)/')
-    ))
-    app.add_handler(MessageHandler(
-        handle_welcome_text,
-        filters.TEXT & ~filters.COMMAND,
-        group=1
-    ))
-    app.add_handler(MessageHandler(
-        handle_broadcast_content,
-        filters.ALL & ~filters.COMMAND,
-        group=2
-    ))
-
-    logger.info("Starting bot...")
-    app.run_polling(
-        allowed_updates=[
-            "message", "callback_query", "chat_join_request",
-            "my_chat_member", "chat_member"
-        ],
-        drop_pending_updates=True
-    )
+    from handlers.callbacks import callback_router
+    app.add_handler(CallbackQueryHandler(callback_router))
+    from handlers.join_request import join_request_handler
+    app.add_handler(ChatJoinRequestHandler(join_request_handler))
+    from handlers.channel_detection import channel_detection_handler
+    app.add_handler(ChatMemberHandler(channel_detection_handler, chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER))
+    from handlers.welcome_dm import welcome_message_handler
+    async def text_message_handler(update, context):
+        if context.user_data.get("editing_welcome_for"):
+            return await welcome_message_handler(update, context)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
+    logger.info("Starting bot in polling mode...")
+    app.run_polling(allowed_updates=["message", "callback_query", "chat_join_request", "my_chat_member", "chat_member"], drop_pending_updates=True)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
