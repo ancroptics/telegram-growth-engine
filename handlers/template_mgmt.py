@@ -1,55 +1,59 @@
-"""Template management."""
+"""Template management handlers."""
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from database.models import get_templates, save_template, delete_template
-from utils.keyboards import back_kb
 
 logger = logging.getLogger(__name__)
 
-async def handle_template_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    templates = await get_templates(update.effective_user.id)
-    if not templates:
-        text = "\U0001f4dd <b>Templates</b>\n\nNo templates yet. Send /newtemplate {name} to create one."
-    else:
-        text = "\U0001f4dd <b>Your Templates</b>\n\n"
-        for t in templates:
-            text += f"\u2022 <b>{t['name']}</b> ({t['content_type']}) \u2014 used {t.get('use_count', 0)}x\n"
-    await query.message.edit_text(text, parse_mode="HTML", reply_markup=back_kb())
 
 async def new_template_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: /newtemplate {name}")
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: /newtemplate <name>\nThen send the content.")
         return
-    context.user_data["creating_template"] = context.args[0]
-    await update.message.reply_text(f"\U0001f4dd Send content for \'{context.args[0]}\'. /cancel to abort")
+    name = args[0]
+    context.user_data["creating_template"] = name
+    await update.message.reply_text(f"\ud83d\udccb Creating template \"{name}\". Send the content now (text, photo, or video):")
+
 
 async def del_template_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: /deltemplate {name}")
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: /deltemplate <name>")
         return
-    await delete_template(update.effective_user.id, context.args[0])
-    await update.message.reply_text(f"\u2705 Template \'{context.args[0]}\' deleted.")
+    await delete_template(update.effective_user.id, args[0])
+    await update.message.reply_text(f"\u2705 Template \"{args[0]}\" deleted.")
+
 
 async def template_content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = context.user_data.get("creating_template")
-    if not name: return False
-    message = update.message
-    if message.text and message.text.startswith("/cancel"):
-        del context.user_data["creating_template"]
-        await message.reply_text("\u274c Cancelled.")
-        return True
-    if message.photo:
-        await save_template(update.effective_user.id, name, "photo", media_file_id=message.photo[-1].file_id, caption=message.caption)
-    elif message.video:
-        await save_template(update.effective_user.id, name, "video", media_file_id=message.video.file_id, caption=message.caption)
-    elif message.text:
-        await save_template(update.effective_user.id, name, "text", content=message.text)
+    name = context.user_data.pop("creating_template", None)
+    if not name:
+        return
+    msg = update.message
+    if msg.photo:
+        await save_template(msg.from_user.id, name, "photo", media_file_id=msg.photo[-1].file_id, caption=msg.caption)
+    elif msg.video:
+        await save_template(msg.from_user.id, name, "video", media_file_id=msg.video.file_id, caption=msg.caption)
+    elif msg.document:
+        await save_template(msg.from_user.id, name, "document", media_file_id=msg.document.file_id, caption=msg.caption)
     else:
-        await message.reply_text("Unsupported type.")
-        return True
-    del context.user_data["creating_template"]
-    await message.reply_text(f"\u2705 Template \'{name}\' saved!")
-    return True
+        await save_template(msg.from_user.id, name, "text", content=msg.text)
+    await msg.reply_text(f"\u2705 Template \"{name}\" saved!")
+
+
+async def handle_template_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    user_id = update.effective_user.id
+    if data in ("template_settings", "templates_list"):
+        templates = await get_templates(user_id)
+        if not templates:
+            await query.message.edit_text("\ud83d\udccb No templates yet. Use /newtemplate <name> to create one.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]]))
+            return
+        text = "\ud83d\udccb <b>Your Templates</b>\n\n"
+        for t in templates:
+            text += f"\u2022 <b>{t.get('name', '?')}</b> ({t.get('content_type', '?')})\n"
+        await query.message.edit_text(text, parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]]))

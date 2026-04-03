@@ -1,170 +1,77 @@
-"""Per-channel settings management."""
-import json
+"""Channel settings callback handler."""
 import logging
 from html import escape as html_escape
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
-from database.models import get_managed_channel, update_channel_setting, get_pending_requests, get_owner_channels
-from utils.keyboards import channel_manage_kb, channel_settings_kb, channels_list_kb, back_kb
-from utils.helpers import format_number
+from database.models import get_owner_channels, get_managed_channel, update_channel_setting, remove_managed_channel
 
 logger = logging.getLogger(__name__)
-
-
-async def show_channels_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = update.effective_user
-    await query.answer()
-
-    channels = await get_owner_channels(user.id)
-    if not channels:
-        text = ("\ud83d\udce2 <b>My Channels</b>\n\n"
-                "No channels connected yet!\n\n"
-                "Add me as admin to your channel to get started.")
-        kb = back_kb("main_menu")
-    else:
-        text = f"\ud83d\udce2 <b>My Channels</b> ({len(channels)})\n\n"
-        for ch in channels:
-            title = html_escape(ch.get("chat_title", "Unknown"))
-            approved = ch.get("total_approved", 0)
-            active = "\u2705" if ch.get("is_active", True) else "\u23f8"
-            text += f"{active} <b>{title}</b> \u2014 \u2705 {format_number(approved)}\n"
-        kb = channels_list_kb(channels)
-
-    await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def handle_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
-
-    if data.startswith("manage_ch:"):
-        chat_id = int(data.split(":")[1])
-        await query.answer()
-        await _show_channel_manage(query, chat_id)
-
-    elif data.startswith("ch_settings:"):
-        chat_id = int(data.split(":")[1])
-        await query.answer()
-        await _show_channel_settings(query, chat_id)
-
-    elif data.startswith("toggle_"):
-        parts = data.split(":")
-        setting = parts[0].replace("toggle_", "")
-        chat_id = int(parts[1])
-
-        channel = await get_managed_channel(chat_id)
-        if not channel:
-            await query.answer("Channel not found", show_alert=True)
+    user_id = update.effective_user.id
+    if data in ("my_channels", "add_channel"):
+        channels = await get_owner_channels(user_id)
+        if not channels:
+            await query.message.edit_text("\ud83d\udcca <b>My Channels</b>\n\nNo channels yet! Add me as admin to a channel.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]]))
             return
-
-        current = channel.get(setting, False)
-        new_val = not current
-        await update_channel_setting(chat_id, setting, new_val)
-
-        status = "enabled" if new_val else "disabled"
-        await query.answer(f"{setting.replace('_', ' ').title()} {status}!")
-        await _show_channel_settings(query, chat_id)
-
-    elif data.startswith("set_welcome:"):
+        buttons = []
+        for ch in channels:
+            title = html_escape(ch.get("chat_title", "?"))[:30]
+            buttons.append([InlineKeyboardButton(f"\ud83d\udce2 {title}", callback_data=f"manage_ch:{ch['chat_id']}")] )
+        buttons.append([InlineKeyboardButton("\u00ab Back", callback_data="main_menu")])
+        await query.message.edit_text("\ud83d\udcca <b>Your Channels</b>\nSelect one to manage:", parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons))
+    elif data.startswith("manage_ch:"):
         chat_id = int(data.split(":")[1])
-        context.user_data["editing_welcome"] = chat_id
-        await query.answer()
-        await query.message.edit_text(
-            "\ud83d\udcdd <b>Set Welcome Message</b>\n\n"
-            "Send the new welcome message. Variables:\n"
-            "<code>{first_name}</code> \u2014 User\'s first name\n"
-            "<code>{username}</code> \u2014 User\'s username\n"
-            "<code>{channel_name}</code> \u2014 Channel title\n"
-            "<code>{member_count}</code> \u2014 Member count\n\n"
-            "Send your message now:",
-            parse_mode="HTML",
-            reply_markup=back_kb(f"ch_settings:{chat_id}")
-        )
-
-    elif data.startswith("remove_ch:"):
+        ch = await get_managed_channel(chat_id)
+        if not ch:
+            await query.message.edit_text("\u274c Channel not found.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="my_channels")]]))
+            return
+        title = html_escape(ch.get("chat_title", "?"))
+        auto = "\u2705" if ch.get("auto_approve") else "\u274c"
+        drip = "\u2705" if ch.get("drip_enabled") else "\u274c"
+        welcome = "\u2705" if ch.get("welcome_dm_enabled") else "\u274c"
+        fsub = "\u2705" if ch.get("force_subscribe_enabled") else "\u274c"
+        text = (f"\u2699\ufe0f <b>{title}</b>\n\n"
+            f"Auto Approve: {auto}\nDrip Mode: {drip}\nWelcome DM: {welcome}\nForce Subscribe: {fsub}\n"
+            f"Members: {ch.get('member_count', 0)} | Approved: {ch.get('total_approved', 0)}")
+        buttons = [
+            [InlineKeyboardButton(f"{'\ud83d\udd34' if ch.get('auto_approve') else '\ud83d\udfe2'} Toggle Auto-Approve", callback_data=f"ch_toggle:auto_approve:{chat_id}")],
+            [InlineKeyboardButton("\ud83d\udcac Edit Welcome", callback_data=f"ch_edit_welcome:{chat_id}"),
+             InlineKeyboardButton("\ud83d\udd12 Force Sub", callback_data=f"ch_force_sub:{chat_id}")],
+            [InlineKeyboardButton("\ud83d\udcca Analytics", callback_data=f"ch_analytics:{chat_id}"),
+             InlineKeyboardButton("\ud83d\udc65 Pending", callback_data=f"ch_pending:{chat_id}")],
+            [InlineKeyboardButton("\ud83d\uddd1 Remove", callback_data=f"ch_delete:{chat_id}")],
+            [InlineKeyboardButton("\u00ab Back", callback_data="my_channels")],
+        ]
+        await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+    elif data.startswith("ch_toggle:"):
+        parts = data.split(":")
+        field = parts[1]
+        chat_id = int(parts[2])
+        ch = await get_managed_channel(chat_id)
+        if ch:
+            new_val = not ch.get(field, False)
+            await update_channel_setting(chat_id, **{field: new_val})
+            await query.answer(f"{'Enabled' if new_val else 'Disabled'}!")
+            update.callback_query.data = f"manage_ch:{chat_id}"
+            await handle_channel_callback(update, context)
+    elif data.startswith("ch_delete:"):
         chat_id = int(data.split(":")[1])
-        from database.models import remove_managed_channel
+        buttons = [
+            [InlineKeyboardButton("\u2705 Yes, Remove", callback_data=f"ch_confirm_delete:{chat_id}"),
+             InlineKeyboardButton("\u274c Cancel", callback_data=f"manage_ch:{chat_id}")],
+        ]
+        await query.message.edit_text("\u26a0\ufe0f Remove this channel?", reply_markup=InlineKeyboardMarkup(buttons))
+    elif data.startswith("ch_confirm_delete:"):
+        chat_id = int(data.split(":")[1])
         await remove_managed_channel(chat_id)
-        await query.answer("\u2705 Channel removed", show_alert=True)
-        await show_channels_list(update, context)
-
-
-async def _show_channel_manage(query, chat_id):
-    channel = await get_managed_channel(chat_id)
-    if not channel:
-        await query.message.edit_text("Channel not found.", reply_markup=back_kb("my_channels"))
-        return
-
-    title = html_escape(channel.get("chat_title", "Unknown"))
-    approved = channel.get("total_approved", 0)
-    pending_count = len(await get_pending_requests(chat_id, limit=1))
-    members = channel.get("member_count", 0)
-    dms = channel.get("dm_sent_count", 0)
-
-    auto = "\u2705" if channel.get("auto_approve", True) else "\u274c"
-    drip = "\u2705" if channel.get("drip_enabled", False) else "\u274c"
-    welcome = "\u2705" if channel.get("welcome_dm_enabled", True) else "\u274c"
-
-    text = (f"\u2699\ufe0f <b>{title}</b>\n\n"
-            f"\ud83d\udc65 Members: {format_number(members)}\n"
-            f"\u2705 Approved: {format_number(approved)}\n"
-            f"\u23f3 Pending: {pending_count}+\n"
-            f"\ud83d\udcac DMs Sent: {format_number(dms)}\n\n"
-            f"<b>Settings:</b>\n"
-            f"Auto-approve: {auto}\n"
-            f"Drip mode: {drip}\n"
-            f"Welcome DM: {welcome}")
-
-    await query.message.edit_text(
-        text, parse_mode="HTML",
-        reply_markup=channel_manage_kb(chat_id)
-    )
-
-
-async def _show_channel_settings(query, chat_id):
-    channel = await get_managed_channel(chat_id)
-    if not channel:
-        await query.message.edit_text("Channel not found.", reply_markup=back_kb("my_channels"))
-        return
-
-    title = html_escape(channel.get("chat_title", "Unknown"))
-    text = f"\u2699\ufe0f <b>Settings for {title}</b>\n\n"
-
-    settings_map = {
-        "auto_approve": ("Auto-Approve", channel.get("auto_approve", True)),
-        "welcome_dm_enabled": ("Welcome DM", channel.get("welcome_dm_enabled", True)),
-        "drip_enabled": ("Drip Mode", channel.get("drip_enabled", False)),
-        "watermark_enabled": ("Watermark", channel.get("watermark_enabled", True)),
-    }
-
-    for key, (label, val) in settings_map.items():
-        icon = "\u2705" if val else "\u274c"
-        text += f"{icon} {label}\n"
-
-    await query.message.edit_text(
-        text, parse_mode="HTML",
-        reply_markup=channel_settings_kb(chat_id, channel)
-    )
-
-
-async def channel_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    chat_id = context.user_data.get("editing_welcome")
-    if not chat_id:
-        return False
-
-    new_welcome = update.message.text.strip()
-    if not new_welcome:
-        await update.message.reply_text("\u26a0\ufe0f Message cannot be empty.")
-        return True
-
-    await update_channel_setting(chat_id, "welcome_message", new_welcome)
-    context.user_data.pop("editing_welcome", None)
-
-    await update.message.reply_text(
-        f"\u2705 Welcome message updated!\n\n"
-        f"Preview:\n{html_escape(new_welcome[:200])}",
-        parse_mode="HTML",
-        reply_markup=back_kb(f"ch_settings:{chat_id}")
-    )
-    return True
+        await query.answer("Channel removed!")
+        update.callback_query.data = "my_channels"
+        await handle_channel_callback(update, context)
