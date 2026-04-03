@@ -1,78 +1,69 @@
-"""APScheduler background jobs."""
-import asyncio
+"""APScheduler setup for periodic tasks."""
 import logging
-from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from telegram.ext import Application
-import aiohttp
 
 logger = logging.getLogger(__name__)
-scheduler = AsyncIOScheduler()
 
-async def self_ping_job():
-    """Ping own health endpoint to prevent Render free tier spin-down."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get("https://telegram-growth-engine.onrender.com/health", timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                logger.debug(f"Self-ping: {resp.status}")
-    except Exception as e:
-        logger.warning(f"Self-ping failed: {e}")
+_scheduler = None
 
-async def drip_approve_job(app: Application):
-    from database.models import get_drip_channels, get_pending_requests, approve_join_request_db
-    from telegram.error import BadRequest, RetryAfter
-    channels = await get_drip_channels()
-    now = datetime.now()
-    for ch in channels:
-        if now.hour < ch.get("drip_active_start", 8) or now.hour >= ch.get("drip_active_end", 23): continue
-        rate = ch.get("drip_rate", 50)
-        pending = await get_pending_requests(ch["chat_id"], limit=rate)
-        for req in pending:
-            try:
-                await app.bot.approve_chat_join_request(ch["chat_id"], req["user_id"])
-                await approve_join_request_db(req["user_id"], ch["chat_id"], "drip")
-            except BadRequest:
-                await approve_join_request_db(req["user_id"], ch["chat_id"], "drip")
-            except RetryAfter as e:
-                await asyncio.sleep(e.retry_after)
-            except Exception as e:
-                logger.error(f"Drip error: {e}")
-            await asyncio.sleep(0.5)
 
-async def auto_post_job(app: Application):
-    from database.models import get_due_auto_posts, update_auto_post_next
-    posts = await get_due_auto_posts()
-    for post in posts:
+def setup_scheduler(app):
+    """Set up periodic jobs."""
+    global _scheduler
+    _scheduler = AsyncIOScheduler()
+
+    async def run_auto_posts():
         try:
-            await app.bot.send_message(post["group_chat_id"], post.get("content", ""), parse_mode="HTML")
-            await update_auto_post_next(post["schedule_id"], post["interval_minutes"])
+            from database.models import get_due_auto_posts, update_auto_post_next
+            posts = await get_due_auto_posts()
+            for post in posts:
+                try:
+                    chat_id = post.get("group_chat_id")
+                    content = post.get("content", "")
+                    content_type = post.get("content_type", "text")
+                    if content_type == "text" and content:
+                        await app.bot.send_message(chat_id, content, parse_mode="HTML")
+                    interval = post.get("interval_minutes", 60)
+                    await update_auto_post_next(post["schedule_id"], interval)
+                    logger.info(f"Auto-posted to {chat_id}")
+                except Exception as e:
+                    logger.error(f"Auto-post error for {post.get('schedule_id')}: {e}")
         except Exception as e:
-            logger.error(f"Auto-post error: {e}")
+            logger.error(f"Auto-post scheduler error: {e}")
 
-async def scheduled_broadcast_job(app: Application):
-    from database.models import get_scheduled_broadcasts, update_broadcast_progress, get_broadcast_targets, mark_user_blocked
-    from telegram.error import Forbidden
-    broadcasts = await get_scheduled_broadcasts()
-    for bc in broadcasts:
-        targets = await get_broadcast_targets(bc["owner_id"], bc.get("target_segment", "all"), bc.get("channel_id"))
-        sent = failed = blocked = 0
-        for uid in targets:
-            try:
-                if bc.get("content_type") == "photo" and bc.get("media_file_id"):
-                    await app.bot.send_photo(uid, bc["media_file_id"], caption=bc.get("caption", ""))
-                else:
-                    await app.bot.send_message(uid, bc.get("content", ""), parse_mode="HTML")
-                sent += 1
-            except Forbidden: blocked += 1; await mark_user_blocked(uid)
-            except Exception: failed += 1
-            if sent % 25 == 0: await asyncio.sleep(1)
-        await update_broadcast_progress(bc["broadcast_id"], sent, failed, blocked, "completed")
+    async def run_scheduled_broadcasts():
+        try:
+            from database.models import get_scheduled_broadcasts
+            broadcasts = await get_scheduled_broadcasts()
+            for bc in broadcasts:
+                logger.info(f"Scheduled broadcast {bc.get('broadcast_id')} is due")
+        except Exception as e:
+            logger.error(f"Broadcast scheduler error: {e}")
 
-def setup_scheduler(app: Application):
-    scheduler.add_job(self_ping_job, IntervalTrigger(minutes=2), id="selfping", replace_existing=True, max_instances=1)
-    scheduler.add_job(drip_approve_job, IntervalTrigger(minutes=5), args=[app], id="drip", replace_existing=True, max_instances=1)
-    scheduler.add_job(auto_post_job, IntervalTrigger(minutes=1), args=[app], id="autopost", replace_existing=True, max_instances=1)
-    scheduler.add_job(scheduled_broadcast_job, IntervalTrigger(minutes=2), args=[app], id="broadcast", replace_existing=True, max_instances=1)
-    scheduler.start()
-    logger.info("Scheduler started with self-ping every 2 minutes")
+    async def run_drip_approvals():
+        try:
+            from database.models import get_drip_channels, get_pending_requests, approve_join_request_db
+            channels = await get_drip_channels()
+            for ch in channels:
+                try:
+                    pending = await get_pending_requests(ch["chat_id"])
+                    drip_rate = ch.get("drip_rate", 1)
+                    to_approve = pending[:drip_rate]
+                    for req in to_approve:
+                        try:
+                            await app.bot.approve_chat_join_request(ch["chat_id"], req["user_id"])
+                            await approve_join_request_db(req["user_id"], ch["chat_id"], method="drip")
+                            logger.info(f"Drip approved {req['user_id']} for {ch['chat_id']}")
+                        except Exception as e:
+                            logger.error(f"Drip approve error: {e}")
+                except Exception as e:
+                    logger.error(f"Drip channel error: {e}")
+        except Exception as e:
+            logger.error(f"Drip scheduler error: {e}")
+
+    _scheduler.add_job(run_auto_posts, IntervalTrigger(minutes=1), id="auto_posts", replace_existing=True)
+    _scheduler.add_job(run_scheduled_broadcasts, IntervalTrigger(minutes=2), id="scheduled_broadcasts", replace_existing=True)
+    _scheduler.add_job(run_drip_approvals, IntervalTrigger(minutes=5), id="drip_approvals", replace_existing=True)
+    _scheduler.start()
+    logger.info("Scheduler started with 3 jobs")

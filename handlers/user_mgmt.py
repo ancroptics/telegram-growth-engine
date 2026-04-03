@@ -1,10 +1,14 @@
-"""User management for superadmins."""
+"""Stub handler for user_mgmt."""
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
+
 async def handle_user_mgmt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer("Coming soon!", show_alert=True)
+    await query.message.edit_text(
+        "\ud83d\udea7 This feature is coming soon!",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]])
+    )
