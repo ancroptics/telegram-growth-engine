@@ -35,7 +35,7 @@ async def handle_force_sub_callback(update: Update, context: ContextTypes.DEFAUL
                 await approve_join_request_db(user.id, chat_id, method="force_sub")
                 await mark_force_sub_completed(user.id, chat_id)
                 await update_channel_stats(chat_id, approved=1)
-                await query.message.edit_text("\u2705 Verified! You've been approved. Welcome! \ud83c\udf89")
+                await query.message.edit_text("\u2705 Verified! You've been approved. Welcome! \U0001f389")
             except Exception as e:
                 logger.error(f"Force sub approve error: {e}")
                 await query.message.edit_text("\u2705 Verified! You should be approved shortly.")
@@ -44,7 +44,7 @@ async def handle_force_sub_callback(update: Update, context: ContextTypes.DEFAUL
     elif data.startswith("ch_force_sub:"):
         chat_id = int(data.split(":")[1])
         channels = await get_force_sub_channels(chat_id)
-        text = f"\ud83d\udd12 <b>Force Subscribe</b>\n\nRequired channels: {len(channels)}\n"
+        text = f"\U0001f512 <b>Force Subscribe</b>\n\nRequired channels: {len(channels)}\n"
         for i, fc in enumerate(channels):
             name = fc if isinstance(fc, str) else fc.get("username", "?")
             text += f"  {i+1}. {name}\n"
@@ -63,7 +63,7 @@ async def handle_force_sub_callback(update: Update, context: ContextTypes.DEFAUL
         if channels:
             last = channels[-1]
             await remove_force_sub_channel(chat_id, last)
-            await query.answer(f"Removed")
+            await query.answer("Removed")
         update.callback_query.data = f"ch_force_sub:{chat_id}"
         await handle_force_sub_callback(update, context)
 
