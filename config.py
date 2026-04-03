@@ -7,7 +7,6 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-
 class Config:
     """Bot configuration from environment variables."""
     # Telegram
@@ -17,7 +16,8 @@ class Config:
     WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "tge_secret_token_2024")
     WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH", "/webhook")
 
-    # Supabase
+    # Database
+    DATABASE_URL = os.environ.get("DATABASE_URL", "")
     SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
     SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
@@ -55,10 +55,8 @@ class Config:
         missing = []
         if not cls.BOT_TOKEN:
             missing.append("BOT_TOKEN")
-        if not cls.SUPABASE_URL:
-            missing.append("SUPABASE_URL")
-        if not cls.SUPABASE_SERVICE_KEY:
-            missing.append("SUPABASE_SERVICE_KEY")
+        if not cls.DATABASE_URL and not cls.SUPABASE_URL:
+            missing.append("DATABASE_URL or SUPABASE_URL")
         if missing:
             logger.error(f"Missing required env vars: {', '.join(missing)}")
             return False
