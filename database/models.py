@@ -416,3 +416,65 @@ async def set_user_tier(user_id: int, tier: str):
 async def get_all_user_ids():
     rows = await Database.fetch("SELECT DISTINCT user_id FROM end_users WHERE is_blocked = FALSE")
     return [r["user_id"] for r in rows]
+
+# ─── MISSING FUNCTIONS (imported by other handlers) ───
+
+async def get_channel_owner(user_id: int):
+    return await Database.fetch_one("SELECT * FROM channel_owners WHERE user_id = $1", user_id)
+
+
+async def register_channel_owner(user_id: int, username: str = None, full_name: str = None):
+    await ensure_user(user_id, username, full_name)
+
+
+async def track_interaction(user_id: int, action: str):
+    try:
+        await Database.execute("UPDATE channel_owners SET last_active = NOW() WHERE user_id = $1", user_id)
+    except Exception:
+        pass
+
+
+async def approve_join_request_db(user_id: int, chat_id: int, method: str = "auto"):
+    await Database.execute(
+        "UPDATE join_requests SET status = 'approved', processed_by = $3, processed_at = NOW() WHERE user_id = $1 AND chat_id = $2",
+        user_id, chat_id, method
+    )
+
+
+async def decline_join_request_db(user_id: int, chat_id: int):
+    await Database.execute(
+        "UPDATE join_requests SET status = 'declined', processed_at = NOW() WHERE user_id = $1 AND chat_id = $2",
+        user_id, chat_id
+    )
+
+
+async def mark_force_sub_completed(user_id: int, chat_id: int):
+    await Database.execute(
+        "UPDATE join_requests SET force_sub_completed = TRUE WHERE user_id = $1 AND chat_id = $2",
+        user_id, chat_id
+    )
+
+
+async def increment_dm_count(chat_id: int):
+    await increment_channel_stat(chat_id, "dms_sent")
+
+
+async def update_channel_stats(chat_id: int, approved: int = 0, declined: int = 0, dms: int = 0):
+    if approved > 0:
+        await increment_channel_stat(chat_id, "requests_approved", approved)
+    if dms > 0:
+        await increment_channel_stat(chat_id, "dms_sent", dms)
+
+
+async def get_scheduled_broadcasts():
+    return await Database.fetch(
+        "SELECT * FROM broadcasts WHERE status = 'scheduled' AND scheduled_at <= NOW()"
+    )
+
+
+async def get_due_auto_posts():
+    return []
+
+
+async def update_auto_post_next(schedule_id: int, interval: int):
+    pass
