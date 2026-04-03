@@ -12,26 +12,26 @@ async def handle_template_callback(update: Update, context: ContextTypes.DEFAULT
     await query.answer()
     templates = await get_templates(update.effective_user.id)
     if not templates:
-        text = "📝 <b>Templates</b>\n\nNo templates yet. Send /newtemplate <name> to create one."
+        text = "\U0001f4dd <b>Templates</b>\n\nNo templates yet. Send /newtemplate {name} to create one."
     else:
-        text = "📝 <b>Your Templates</b>\n\n"
+        text = "\U0001f4dd <b>Your Templates</b>\n\n"
         for t in templates:
-            text += f"• <b>{t['name']}</b> ({t['content_type']}) — used {t.get('use_count', 0)}x\n"
+            text += f"\u2022 <b>{t['name']}</b> ({t['content_type']}) \u2014 used {t.get('use_count', 0)}x\n"
     await query.message.edit_text(text, parse_mode="HTML", reply_markup=back_kb())
 
 async def new_template_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Usage: /newtemplate <name>")
+        await update.message.reply_text("Usage: /newtemplate {name}")
         return
     context.user_data["creating_template"] = context.args[0]
-    await update.message.reply_text(f"📝 Send content for '{context.args[0]}'. /cancel to abort")
+    await update.message.reply_text(f"\U0001f4dd Send content for \'{context.args[0]}\'. /cancel to abort")
 
 async def del_template_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Usage: /deltemplate <name>")
+        await update.message.reply_text("Usage: /deltemplate {name}")
         return
     await delete_template(update.effective_user.id, context.args[0])
-    await update.message.reply_text(f"✅ Template '{context.args[0]}' deleted.")
+    await update.message.reply_text(f"\u2705 Template \'{context.args[0]}\' deleted.")
 
 async def template_content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = context.user_data.get("creating_template")
@@ -39,7 +39,7 @@ async def template_content_handler(update: Update, context: ContextTypes.DEFAULT
     message = update.message
     if message.text and message.text.startswith("/cancel"):
         del context.user_data["creating_template"]
-        await message.reply_text("❌ Cancelled.")
+        await message.reply_text("\u274c Cancelled.")
         return True
     if message.photo:
         await save_template(update.effective_user.id, name, "photo", media_file_id=message.photo[-1].file_id, caption=message.caption)
@@ -51,5 +51,5 @@ async def template_content_handler(update: Update, context: ContextTypes.DEFAULT
         await message.reply_text("Unsupported type.")
         return True
     del context.user_data["creating_template"]
-    await message.reply_text(f"✅ Template '{name}' saved!")
+    await message.reply_text(f"\u2705 Template \'{name}\' saved!")
     return True
