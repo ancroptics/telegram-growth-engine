@@ -69,21 +69,21 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
     if data == "admin_panel":
         stats = await get_global_stats()
-        text = ("\ud83d\udd27 <b>Admin Panel</b>\n\n"
-            f"\ud83d\udc65 Users: {stats['total_users']}\n"
-            f"\ud83d\udce2 Channels: {stats['active_channels']}\n"
-            f"\ud83d\udc64 Owners: {stats['total_owners']}\n"
-            f"\ud83d\udcc8 Today: {stats['today_requests']} requests, {stats['today_approved']} approved, {stats['today_dms']} DMs")
+        text = ("\U0001f527 <b>Admin Panel</b>\n\n"
+            f"\U0001f465 Users: {stats['total_users']}\n"
+            f"\U0001f4e2 Channels: {stats['active_channels']}\n"
+            f"\U0001f464 Owners: {stats['total_owners']}\n"
+            f"\U0001f4c8 Today: {stats['today_requests']} requests, {stats['today_approved']} approved, {stats['today_dms']} DMs")
         buttons = [
-            [InlineKeyboardButton("\ud83d\udc65 All Owners", callback_data="admin_owners"),
-             InlineKeyboardButton("\ud83d\udce2 Broadcast All", callback_data="admin_bc")],
+            [InlineKeyboardButton("\U0001f465 All Owners", callback_data="admin_owners"),
+             InlineKeyboardButton("\U0001f4e2 Broadcast All", callback_data="admin_bc")],
             [InlineKeyboardButton("\u2699\ufe0f Settings", callback_data="admin_settings")],
             [InlineKeyboardButton("\u00ab Back", callback_data="main_menu")],
         ]
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
     elif data == "admin_owners":
         owners = await get_all_owners(20)
-        text = "\ud83d\udc65 <b>Recent Owners</b>\n\n"
+        text = "\U0001f465 <b>Recent Owners</b>\n\n"
         for o in owners:
             text += f"\u2022 {o.get('user_id')} \u2014 {o.get('username', 'N/A')} [{o.get('tier', 'free')}]\n"
         if not owners:
@@ -92,7 +92,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="admin_panel")]]))
     elif data == "admin_bc":
         context.user_data["admin_broadcast"] = True
-        await query.message.edit_text("\ud83d\udce2 Send the message to broadcast to ALL users:",
+        await query.message.edit_text("\U0001f4e2 Send the message to broadcast to ALL users:",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u274c Cancel", callback_data="admin_panel")]]))
     elif data == "admin_settings":
         settings = await get_all_settings()
@@ -119,7 +119,7 @@ async def admin_broadcast_handler(update: Update, context: ContextTypes.DEFAULT_
             sent += 1
         except Exception:
             failed += 1
-    await update.message.reply_text(f"\ud83d\udce2 Broadcast complete: {sent} sent, {failed} failed.")
+    await update.message.reply_text(f"\U0001f4e2 Broadcast complete: {sent} sent, {failed} failed.")
 
 
 async def admin_setting_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
