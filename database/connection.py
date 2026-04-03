@@ -1,159 +1,190 @@
-"""Async PostgreSQL connection via Supabase REST API (HTTPS).
-
-Uses the PostgREST RPC endpoint to execute raw SQL,
-and Supabase client for ORM-style queries.
-"""
+"""Database connection — Supabase REST API or direct PostgreSQL."""
 import os
 import logging
 import json
-from typing import Any, Optional
-
+from typing import Any, Optional, List
 import httpx
 
 logger = logging.getLogger(__name__)
 
-# ── Supabase connection info (from env) ──────────────────────────
-SUPABASE_URL: str = ""
-SUPABASE_KEY: str = ""
-HEADERS: dict = {}
-
-_supabase_client = None
-
+SUPABASE_URL = ""
+SUPABASE_KEY = ""
+DATABASE_URL = ""
+HEADERS = {}
 
 def init_db():
-    """Initialize DB connection settings from environment variables."""
-    global SUPABASE_URL, SUPABASE_KEY, HEADERS, _supabase_client
+    """Initialize DB connection from environment."""
+    global SUPABASE_URL, SUPABASE_KEY, DATABASE_URL, HEADERS
     SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
     SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        logger.error("SUPABASE_URL or SUPABASE_SERVICE_KEY not set!")
-        return
-    HEADERS = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "return=representation",
-    }
-    try:
-        from supabase import create_client
-        _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        logger.info("Supabase client initialized")
-    except Exception as e:
-        logger.error(f"Failed to create Supabase client: {e}")
+    DATABASE_URL = os.environ.get("DATABASE_URL", "")
+    
+    if SUPABASE_URL and SUPABASE_KEY:
+        HEADERS = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+        logger.info("Using Supabase REST API")
+    elif DATABASE_URL:
+        logger.info("Using direct PostgreSQL via DATABASE_URL")
+    else:
+        logger.error("No database configuration found!")
 
+def _use_rest():
+    return bool(SUPABASE_URL and SUPABASE_KEY)
 
-def get_supabase():
-    """Return the Supabase client."""
-    global _supabase_client
-    if _supabase_client is None:
-        init_db()
-    return _supabase_client
+# -- REST API methods --
 
-
-async def execute_sql(query: str, params: Optional[dict] = None) -> Any:
-    """Execute raw SQL via Supabase RPC."""
-    url = f"{SUPABASE_URL}/rest/v1/rpc/exec_sql"
-    payload = {"query": query}
-    if params:
-        payload["params"] = params
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, headers=HEADERS, json=payload)
-        if resp.status_code >= 400:
-            logger.error(f"SQL error: {resp.status_code} {resp.text}")
-            return None
-        try:
+async def table_select(table, columns="*", filters=None, order=None, limit=None, single=False):
+    """SELECT from table."""
+    if _use_rest():
+        url = f"{SUPABASE_URL}/rest/v1/{table}?select={columns}"
+        if filters:
+            for k, v in filters.items():
+                url += f"&{k}=eq.{v}"
+        if order:
+            url += f"&order={order}"
+        if limit:
+            url += f"&limit={limit}"
+        headers = {**HEADERS}
+        if single:
+            headers["Accept"] = "application/vnd.pgrst.object+json"
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 406 and single:
+                return None
+            if resp.status_code >= 400:
+                logger.error(f"Select error on {table}: {resp.status_code} {resp.text}")
+                return [] if not single else None
             return resp.json()
-        except Exception:
-            return resp.text
+    else:
+        where = ""
+        args = []
+        if filters:
+            clauses = [f"{k} = ${i+1}" for i, k in enumerate(filters.keys())]
+            where = " WHERE " + " AND ".join(clauses)
+            args = list(filters.values())
+        query = f"SELECT {columns} FROM {table}{where}"
+        if order:
+            query += f" ORDER BY {order.replace('.', ' ')}"
+        if limit:
+            query += f" LIMIT {limit}"
+        rows = await _pg_fetch(query, args)
+        if single:
+            return rows[0] if rows else None
+        return rows or []
 
+async def table_insert(table, data, upsert=False):
+    """INSERT into table."""
+    if _use_rest():
+        url = f"{SUPABASE_URL}/rest/v1/{table}"
+        headers = {**HEADERS}
+        if upsert:
+            headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, headers=headers, json=data)
+            if resp.status_code >= 400:
+                logger.error(f"Insert error on {table}: {resp.status_code} {resp.text}")
+                return None
+            try:
+                result = resp.json()
+                return result[0] if isinstance(result, list) and result else result
+            except Exception:
+                return None
+    else:
+        cols = list(data.keys())
+        vals = list(data.values())
+        placeholders = [f"${i+1}" for i in range(len(cols))]
+        conflict = " ON CONFLICT DO NOTHING" if upsert else ""
+        query = f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(placeholders)}){conflict} RETURNING *"
+        rows = await _pg_fetch(query, vals)
+        return rows[0] if rows else None
 
-async def table_select(
-    table: str,
-    columns: str = "*",
-    filters: Optional[dict] = None,
-    order: Optional[str] = None,
-    limit: Optional[int] = None,
-    single: bool = False,
-) -> Any:
-    """SELECT from a Supabase table via REST."""
-    url = f"{SUPABASE_URL}/rest/v1/{table}?select={columns}"
-    if filters:
-        for k, v in filters.items():
-            url += f"&{k}=eq.{v}"
-    if order:
-        url += f"&order={order}"
-    if limit:
-        url += f"&limit={limit}"
-    headers = {**HEADERS}
-    if single:
-        headers["Accept"] = "application/vnd.pgrst.object+json"
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, headers=headers)
-        if resp.status_code == 406 and single:
-            return None
-        if resp.status_code >= 400:
-            logger.error(f"Select error on {table}: {resp.status_code} {resp.text}")
-            return [] if not single else None
-        return resp.json()
+async def table_update(table, data, filters):
+    """UPDATE table."""
+    if _use_rest():
+        url = f"{SUPABASE_URL}/rest/v1/{table}?"
+        params = [f"{k}=eq.{v}" for k, v in filters.items()]
+        url += "&".join(params)
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.patch(url, headers=HEADERS, json=data)
+            if resp.status_code >= 400:
+                logger.error(f"Update error on {table}: {resp.status_code} {resp.text}")
+                return None
+            try:
+                result = resp.json()
+                return result[0] if isinstance(result, list) and result else result
+            except Exception:
+                return None
+    else:
+        set_clauses = [f"{k} = ${i+1}" for i, k in enumerate(data.keys())]
+        offset = len(data)
+        where_clauses = [f"{k} = ${i+offset+1}" for i, k in enumerate(filters.keys())]
+        query = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)} RETURNING *"
+        args = list(data.values()) + list(filters.values())
+        rows = await _pg_fetch(query, args)
+        return rows[0] if rows else None
 
-
-async def table_insert(table: str, data: dict, upsert: bool = False) -> Any:
-    """INSERT into a Supabase table."""
-    url = f"{SUPABASE_URL}/rest/v1/{table}"
-    headers = {**HEADERS}
-    if upsert:
-        headers["Prefer"] = "resolution=merge-duplicates,return=representation"
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, headers=headers, json=data)
-        if resp.status_code >= 400:
-            logger.error(f"Insert error on {table}: {resp.status_code} {resp.text}")
-            return None
-        try:
-            result = resp.json()
-            return result[0] if isinstance(result, list) and result else result
-        except Exception:
-            return None
-
-
-async def table_update(table: str, data: dict, filters: dict) -> Any:
-    """UPDATE a Supabase table row."""
-    url = f"{SUPABASE_URL}/rest/v1/{table}"
-    for k, v in filters.items():
-        url += f"?{k}=eq.{v}"
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.patch(url, headers=HEADERS, json=data)
-        if resp.status_code >= 400:
-            logger.error(f"Update error on {table}: {resp.status_code} {resp.text}")
-            return None
-        try:
-            result = resp.json()
-            return result[0] if isinstance(result, list) and result else result
-        except Exception:
-            return None
-
-
-async def table_delete(table: str, filters: dict) -> bool:
-    """DELETE from a Supabase table."""
-    url = f"{SUPABASE_URL}/rest/v1/{table}"
-    for k, v in filters.items():
-        url += f"?{k}=eq.{v}"
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.delete(url, headers=HEADERS)
-        if resp.status_code >= 400:
-            logger.error(f"Delete error on {table}: {resp.status_code} {resp.text}")
-            return False
+async def table_delete(table, filters):
+    """DELETE from table."""
+    if _use_rest():
+        url = f"{SUPABASE_URL}/rest/v1/{table}?"
+        params = [f"{k}=eq.{v}" for k, v in filters.items()]
+        url += "&".join(params)
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.delete(url, headers=HEADERS)
+            if resp.status_code >= 400:
+                logger.error(f"Delete error on {table}: {resp.status_code} {resp.text}")
+                return False
+            return True
+    else:
+        clauses = [f"{k} = ${i+1}" for i, k in enumerate(filters.keys())]
+        query = f"DELETE FROM {table} WHERE {' AND '.join(clauses)}"
+        await _pg_execute(query, list(filters.values()))
         return True
 
+async def rpc(function_name, params=None):
+    """Call RPC function."""
+    if _use_rest():
+        url = f"{SUPABASE_URL}/rest/v1/rpc/{function_name}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, headers=HEADERS, json=params or {})
+            if resp.status_code >= 400:
+                logger.error(f"RPC error {function_name}: {resp.status_code} {resp.text}")
+                return None
+            try:
+                return resp.json()
+            except Exception:
+                return resp.text
+    return None
 
-async def rpc(function_name: str, params: Optional[dict] = None) -> Any:
-    """Call a Supabase RPC function."""
-    url = f"{SUPABASE_URL}/rest/v1/rpc/{function_name}"
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, headers=HEADERS, json=params or {})
-        if resp.status_code >= 400:
-            logger.error(f"RPC error {function_name}: {resp.status_code} {resp.text}")
-            return None
-        try:
-            return resp.json()
-        except Exception:
-            return resp.text
+# -- Direct PostgreSQL via asyncpg --
+
+_pool = None
+
+async def _get_pool():
+    global _pool
+    if _pool is None:
+        import asyncpg
+        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    return _pool
+
+async def _pg_fetch(query, args=None):
+    try:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *(args or []))
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"PG fetch error: {e}")
+        return []
+
+async def _pg_execute(query, args=None):
+    try:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(query, *(args or []))
+    except Exception as e:
+        logger.error(f"PG execute error: {e}")
