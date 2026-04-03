@@ -252,3 +252,8 @@ async def get_global_stats() -> dict:
         "total_channels": len(channels),
         "total_users": len(users),
     }
+
+
+async def get_due_auto_posts() -> list:
+    """Get auto posts that are due to be sent."""
+    return await get_active_auto_posts()
