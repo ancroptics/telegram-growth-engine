@@ -16,9 +16,9 @@ def superadmin_only(func):
         user = update.effective_user
         if user.id not in Config.SUPERADMIN_IDS:
             if update.callback_query:
-                await update.callback_query.answer("\u26d4 Superadmin only.", show_alert=True)
+                await update.callback_query.answer("Superadmin only.", show_alert=True)
             else:
-                await update.message.reply_text("\u26d4 Superadmin only.")
+                await update.message.reply_text("Superadmin only.")
             return
         return await func(update, context, *args, **kwargs)
     return wrapper
@@ -44,7 +44,7 @@ def rate_limited(func):
         user = update.effective_user
         if not rate_limiter.is_allowed(user.id):
             if update.callback_query:
-                await update.callback_query.answer("\u23f3 Too fast! Wait a moment.", show_alert=True)
+                await update.callback_query.answer("Too fast! Wait a moment.", show_alert=True)
             return
         return await func(update, context, *args, **kwargs)
     return wrapper
@@ -55,7 +55,7 @@ def premium_required(func):
         user = update.effective_user
         tier = await get_owner_tier(user.id)
         if tier == "free":
-            msg = "\ud83d\udc8e This feature requires Premium. Use /premium to upgrade!"
+            msg = "This feature requires Premium. Use /premium to upgrade!"
             if update.callback_query:
                 await update.callback_query.answer(msg, show_alert=True)
             else:

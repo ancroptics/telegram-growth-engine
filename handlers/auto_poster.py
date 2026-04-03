@@ -6,7 +6,6 @@ from database.models import get_auto_post_groups, create_auto_post_schedule
 
 logger = logging.getLogger(__name__)
 
-
 async def autopost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     groups = await get_auto_post_groups(update.effective_user.id)
     if not groups:
@@ -16,7 +15,6 @@ async def autopost_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = [[InlineKeyboardButton(g.get("chat_title", "?")[:30], callback_data=f"ap_group:{g['chat_id']}")] for g in groups]
     buttons.append([InlineKeyboardButton("\u00ab Back", callback_data="main_menu")])
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
-
 
 async def autopost_content_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     setup = context.user_data.get("autopost_setup")
@@ -28,7 +26,6 @@ async def autopost_content_handler(update: Update, context: ContextTypes.DEFAULT
     context.user_data.pop("autopost_setup", None)
     sid = await create_auto_post_schedule(update.effective_user.id, group_id, content, "text", interval)
     await update.message.reply_text(f"\u2705 Auto post scheduled (ID: {sid})! Posts every {interval} minutes.")
-
 
 async def handle_auto_poster_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
