@@ -378,3 +378,41 @@ async def remove_force_sub_channel(chat_id: int, target_channel: str):
     channels = await get_force_sub_channels(chat_id)
     channels = [c for c in channels if c != target_channel]
     await update_channel_setting(chat_id, force_sub_channels=json.dumps(channels))
+
+# ─── ADMIN FUNCTIONS ───
+
+async def get_all_owners(limit=50):
+    return await Database.fetch(
+        "SELECT * FROM channel_owners ORDER BY created_at DESC LIMIT $1", limit
+    )
+
+
+async def ban_user(user_id: int):
+    await Database.execute(
+        "UPDATE channel_owners SET is_banned = TRUE WHERE user_id = $1", user_id
+    )
+    await Database.execute(
+        "UPDATE end_users SET is_blocked = TRUE WHERE user_id = $1", user_id
+    )
+
+
+async def unban_user(user_id: int):
+    await Database.execute(
+        "UPDATE channel_owners SET is_banned = FALSE WHERE user_id = $1", user_id
+    )
+    await Database.execute(
+        "UPDATE end_users SET is_blocked = FALSE WHERE user_id = $1", user_id
+    )
+
+
+async def set_user_tier(user_id: int, tier: str):
+    await Database.execute(
+        "INSERT INTO channel_owners (user_id, tier, created_at) "
+        "VALUES ($1, $2, NOW()) ON CONFLICT (user_id) DO UPDATE SET tier = $2",
+        user_id, tier
+    )
+
+
+async def get_all_user_ids():
+    rows = await Database.fetch("SELECT DISTINCT user_id FROM end_users WHERE is_blocked = FALSE")
+    return [r["user_id"] for r in rows]
