@@ -21,111 +21,113 @@ logger = logging.getLogger(__name__)
 async def post_init(app):
     try:
         await start_health_server()
-        logger.info(f"Health server started on port {Config.PORT}")
     except Exception as e:
-        logger.error(f"Health server error: {e}")
+        logger.error(f"Health server failed: {e}")
+
     try:
-        await Database.run_migrations()
-        logger.info("Database initialized")
+        db = Database()
+        await db.initialize()
+        app.bot_data['db'] = db
+        logger.info("Database initialized successfully")
     except Exception as e:
-        logger.error(f"Database migration error: {e}")
+        logger.error(f"Database initialization failed: {e}")
+        sys.exit(1)
+
     try:
         setup_scheduler(app)
-        logger.info("Scheduler started")
     except Exception as e:
-        logger.error(f"Scheduler error: {e}")
-    try:
-        bot_info = await app.bot.get_me()
-        Config.BOT_USERNAME = bot_info.username
-        logger.info(f"Bot username: @{Config.BOT_USERNAME}")
-    except Exception as e:
-        logger.error(f"Failed to get bot info: {e}")
+        logger.error(f"Scheduler setup failed: {e}")
 
 
-def setup_handlers(app):
-    from handlers.start import start_command, help_command, dashboard_command
-    from handlers.callbacks import callback_router
-    from handlers.join_request import join_request_handler
-    from handlers.channel_detection import channel_detection_handler
-    from handlers.user_commands import referral_command, stats_command, setdrip_command
-    from handlers.broadcast import broadcast_message_handler
-    from handlers.template_mgmt import new_template_cmd, del_template_cmd, template_content_handler
-    from handlers.auto_poster import autopost_cmd, autopost_content_handler
-    from handlers.clone_bot import clone_command, clone_token_handler
-    from handlers.admin_panel import admin_ban_command, admin_unban_command, admin_set_tier_command, admin_broadcast_handler
-    from handlers.welcome_dm import welcome_message_handler
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("dashboard", dashboard_command))
-    app.add_handler(CommandHandler("referral", referral_command))
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("setdrip", setdrip_command))
-    app.add_handler(CommandHandler("newtemplate", new_template_cmd))
-    app.add_handler(CommandHandler("deltemplate", del_template_cmd))
-    app.add_handler(CommandHandler("autopost", autopost_cmd))
-    app.add_handler(CommandHandler("clone", clone_command))
-    app.add_handler(CommandHandler("ban", admin_ban_command))
-    app.add_handler(CommandHandler("unban", admin_unban_command))
-    app.add_handler(CommandHandler("settier", admin_set_tier_command))
-    app.add_handler(CallbackQueryHandler(callback_router))
-    app.add_handler(ChatJoinRequestHandler(join_request_handler))
-    app.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, message_router))
-    app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Document.ALL) & filters.ChatType.PRIVATE, media_router))
-
-
-async def message_router(update, context):
-    from handlers.admin_panel import admin_broadcast_handler
-    from handlers.broadcast import broadcast_message_handler
-    from handlers.template_mgmt import template_content_handler
-    from handlers.auto_poster import autopost_content_handler
-    from handlers.clone_bot import clone_token_handler
-    from handlers.welcome_dm import welcome_message_handler
-    for handler in [admin_broadcast_handler, broadcast_message_handler, template_content_handler, autopost_content_handler, clone_token_handler, welcome_message_handler]:
-        try:
-            if await handler(update, context):
-                return
-        except Exception as e:
-            logger.error(f"Handler error: {e}")
-
-
-async def media_router(update, context):
-    from handlers.broadcast import broadcast_message_handler
-    from handlers.template_mgmt import template_content_handler
-    from handlers.welcome_dm import welcome_message_handler
-    for handler in [broadcast_message_handler, template_content_handler, welcome_message_handler]:
-        try:
-            if await handler(update, context):
-                return
-        except Exception as e:
-            logger.error(f"Media handler error: {e}")
-
-
-async def error_handler(update, context):
-    """Global error handler - log errors but don't crash the bot."""
-    logger.error(f"Unhandled exception: {context.error}", exc_info=context.error)
-    try:
-        if update and update.callback_query:
-            await update.callback_query.answer("\u26a0\ufe0f Something went wrong. Try again.", show_alert=True)
-        elif update and update.message:
-            await update.message.reply_text("\u26a0\ufe0f Something went wrong. Try again.")
-    except Exception:
-        pass
+async def post_shutdown(app):
+    db = app.bot_data.get('db')
+    if db:
+        await db.close()
+        logger.info("Database connection closed")
 
 
 def main():
-    logger.info("Starting Telegram Growth Engine v3.1")
-    if not Config.BOT_TOKEN:
-        logger.critical("BOT_TOKEN not set! Exiting.")
-        sys.exit(1)
-    if not Config.DATABASE_URL:
-        logger.critical("DATABASE_URL not set! Exiting.")
-        sys.exit(1)
-    app = ApplicationBuilder().token(Config.BOT_TOKEN).post_init(post_init).build()
-    setup_handlers(app)
-    logger.info("Starting bot polling...")
-    app.add_error_handler(error_handler)
-    app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query", "chat_join_request", "my_chat_member"])
+    app = (
+        ApplicationBuilder()
+        .token(Config.BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .concurrent_updates(True)
+        .connect_timeout(30)
+        .read_timeout(30)
+        .write_timeout(30)
+        .build()
+    )
+
+    from handlers.start import start_command, handle_deep_link
+    from handlers.callbacks import button_callback
+    from handlers.admin_panel import admin_command
+    from handlers.force_subscribe import (
+        force_sub_command, set_channel_command, remove_channel_command,
+        check_membership
+    )
+    from handlers.clone_bot import clone_command, handle_clone_token
+    from handlers.broadcast import broadcast_command, handle_broadcast_message
+    from handlers.join_request import handle_join_request, approve_request_callback
+    from handlers.channel_detection import handle_new_chat_member
+    from handlers.channel_settings import channel_settings_command
+    from handlers.analytics_view import analytics_command
+    from handlers.batch_approve import batch_approve_command
+    from handlers.user_commands import (
+        my_referrals_command, leaderboard_command, help_command
+    )
+    from handlers.template_mgmt import template_command
+    from handlers.language_mgmt import language_command
+    from handlers.welcome_dm import handle_welcome_trigger
+
+    # Command handlers
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("forcesub", force_sub_command))
+    app.add_handler(CommandHandler("setchannel", set_channel_command))
+    app.add_handler(CommandHandler("removechannel", remove_channel_command))
+    app.add_handler(CommandHandler("clone", clone_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("settings", channel_settings_command))
+    app.add_handler(CommandHandler("analytics", analytics_command))
+    app.add_handler(CommandHandler("batchapprove", batch_approve_command))
+    app.add_handler(CommandHandler("referrals", my_referrals_command))
+    app.add_handler(CommandHandler("leaderboard", leaderboard_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("template", template_command))
+    app.add_handler(CommandHandler("language", language_command))
+
+    # Callback query handler
+    app.add_handler(CallbackQueryHandler(button_callback))
+
+    # Join request handler
+    app.add_handler(ChatJoinRequestHandler(handle_join_request))
+
+    # Chat member handler
+    app.add_handler(ChatMemberHandler(
+        handle_new_chat_member, ChatMemberHandler.CHAT_MEMBER
+    ))
+
+    # Message handlers
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+        handle_clone_token
+    ))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle_broadcast_message
+    ))
+
+    logger.info("Bot starting...")
+    if Config.USE_WEBHOOK and Config.WEBHOOK_URL:
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=Config.PORT,
+            url_path=Config.BOT_TOKEN,
+            webhook_url=f"{Config.WEBHOOK_URL}/{Config.BOT_TOKEN}"
+        )
+    else:
+        app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query", "chat_join_request", "chat_member"])
 
 
 if __name__ == "__main__":
