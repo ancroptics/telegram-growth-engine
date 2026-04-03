@@ -72,7 +72,7 @@ async def remove_managed_channel(chat_id: int):
 
 # ═══ END USERS ═══
 async def get_or_create_end_user(user_id: int, username: str = None, first_name: str = None,
-                                  language_code: str = None, source_channel: int = None):
+                                  language_code: str = None, source_channel: int = None, **kwargs):
     try:
         existing = await table_select("end_users", filters={"user_id": user_id}, single=True)
         if existing:
@@ -93,7 +93,7 @@ async def mark_user_blocked(user_id: int):
 
 
 # ═══ JOIN REQUESTS ═══
-async def log_join_request(user_id: int, chat_id: int, username: str = None, first_name: str = None, language: str = None):
+async def log_join_request(user_id: int, chat_id: int, username: str = None, first_name: str = None, language: str = None, **kwargs):
     """Log a new join request."""
     return await table_insert("join_requests", {
         "user_id": user_id, "chat_id": chat_id,
@@ -105,7 +105,7 @@ async def log_join_request(user_id: int, chat_id: int, username: str = None, fir
 async def record_join_request(user_id: int, chat_id: int, username: str = None, first_name: str = None):
     return await log_join_request(user_id, chat_id, username, first_name)
 
-async def approve_join_request_db(request_id: int = None, user_id: int = None, chat_id: int = None):
+async def approve_join_request_db(request_id: int = None, user_id: int = None, chat_id: int = None, **kwargs):
     """Mark join request as approved."""
     if request_id:
         await table_update("join_requests", {"status": "approved", "processed_at": "now()"}, {"id": request_id})
@@ -187,7 +187,7 @@ async def mark_force_sub_completed(user_id: int, chat_id: int):
 async def get_templates(owner_id: int) -> list:
     return await table_select("templates", filters={"owner_id": owner_id}) or []
 
-async def save_template(owner_id: int, name: str, content: str, content_type: str = "text"):
+async def save_template(owner_id: int, name: str, content: str, content_type: str = "text", **kwargs):
     return await table_insert("templates", {
         "owner_id": owner_id, "name": name, "content": content, "content_type": content_type,
     })
@@ -200,7 +200,7 @@ async def delete_template(template_id: int):
 async def get_auto_post_groups(owner_id: int) -> list:
     return await table_select("auto_post_groups", filters={"owner_id": owner_id}) or []
 
-async def create_auto_post_schedule(owner_id: int, chat_id: int, content: str, interval_minutes: int = 60):
+async def create_auto_post_schedule(owner_id: int, chat_id: int, content: str, interval_minutes: int = 60, **kwargs):
     return await table_insert("auto_post_schedules", {
         "owner_id": owner_id, "group_chat_id": chat_id,
         "content": content, "interval_minutes": interval_minutes,
@@ -212,7 +212,7 @@ async def get_active_auto_posts() -> list:
 
 
 # ═══ BROADCASTS ═══
-async def create_broadcast(owner_id: int, channel_id: int, content: str, content_type: str = "text", scheduled_at: str = None):
+async def create_broadcast(owner_id: int, channel_id: int, content: str, content_type: str = "text", scheduled_at: str = None, **kwargs):
     data = {
         "owner_id": owner_id, "channel_id": channel_id,
         "content": content, "content_type": content_type,
