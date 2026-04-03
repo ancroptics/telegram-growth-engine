@@ -8,35 +8,32 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-
 async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     stats = await get_referral_stats(user.id)
     bot_username = Config.BOT_USERNAME
     link = f"https://t.me/{bot_username}?start=ref_{user.id}"
     await update.message.reply_text(
-        f"\ud83d\udd17 <b>Your Referral Stats</b>\n\n"
+        f"\U0001f517 <b>Your Referral Stats</b>\n\n"
         f"Total referred: <b>{stats.get('total', 0)}</b>\n"
         f"Active: <b>{stats.get('active', 0)}</b>\n\n"
         f"Your referral link:\n<code>{link}</code>",
         parse_mode="HTML")
 
-
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     channels = await get_owner_channels(user.id)
     if not channels:
-        await update.message.reply_text("\ud83d\udcca No channels connected yet. Add me as admin to a channel!")
+        await update.message.reply_text("\U0001f4ca No channels connected yet. Add me as admin to a channel!")
         return
-    text = "\ud83d\udcca <b>Your Stats (last 7 days)</b>\n\n"
+    text = "\U0001f4ca <b>Your Stats (last 7 days)</b>\n\n"
     for ch in channels:
         title = html_escape(ch.get("chat_title", "Unknown"))
         stats = await get_channel_stats(ch["chat_id"], 7)
         total_approved = sum(s.get("requests_approved", 0) for s in stats)
         total_dms = sum(s.get("dms_sent", 0) for s in stats)
-        text += f"\ud83d\udce2 <b>{title}</b>\n  \u2705 {total_approved} approved | \ud83d\udcac {total_dms} DMs\n\n"
+        text += f"\U0001f4e2 <b>{title}</b>\n  \u2705 {total_approved} approved | \U0001f4ac {total_dms} DMs\n\n"
     await update.message.reply_text(text, parse_mode="HTML")
-
 
 async def setdrip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args

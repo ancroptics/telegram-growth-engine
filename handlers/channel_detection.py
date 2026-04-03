@@ -6,7 +6,6 @@ from database.models import add_managed_channel, remove_managed_channel
 
 logger = logging.getLogger(__name__)
 
-
 async def channel_detection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle my_chat_member updates."""
     result: ChatMemberUpdated = update.my_chat_member
