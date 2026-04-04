@@ -1,99 +1,101 @@
-"""Telegram Growth Engine - Main bot entry point."""
-import logging
-import os
+"""Main bot entry point."""
+import sys, logging, asyncio
+from aiohttp import web
 from telegram import Update
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ChatJoinRequestHandler, filters,
-    ChatMemberHandler
-)
-from config import Config
-from database.connection import init_db
-from database.init_tables import run_migrations
-from handlers.start import start_command, help_command, dashboard_command
-from handlers.channel_detection import channel_detection_handler
-from handlers.join_request import join_request_handler
-from handlers.callbacks import callback_router
-from handlers.user_commands import stats_command, referral_command, setdrip_command
-from handlers.admin_panel import admin_ban_command, admin_unban_command, admin_set_tier_command
-from services.scheduler import setup_scheduler
-from services.health_server import start_health_server
+from telegram.ext import (Application, CommandHandler, CallbackQueryHandler,
+    ChatJoinRequestHandler, ChatMemberHandler, MessageHandler, filters)
+from config import BOT_TOKEN, PORT, ADMIN_IDS
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
-)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 
+async def health_handler(request):
+    return web.Response(text="OK", status=200)
 
-def main():
-    """Start the bot."""
-    init_db()
-    logger.info("Database initialized")
+async def run_health_server():
+    app = web.Application()
+    app.router.add_get("/health", health_handler)
+    app.router.add_get("/", health_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", PORT).start()
+    logger.info(f"Health server on port {PORT}")
 
-    start_health_server()
-    logger.info("Health server started")
+def setup_handlers(application):
+    from handlers.start import start_command, help_command, main_menu_callback
+    from handlers.channels import (my_channels_callback, channel_settings_callback,
+        toggle_approve_callback, toggle_welcome_callback, edit_welcome_callback,
+        approve_mode_callback, set_mode_callback, handle_my_chat_member, handle_welcome_message_input)
+    from handlers.join_requests import handle_join_request
+    from handlers.broadcast import (broadcast_menu_callback, bc_channel_callback, bc_global_callback, handle_broadcast_input)
+    from handlers.analytics import analytics_menu_callback, channel_analytics_callback, stats_command
+    from handlers.premium import premium_menu_callback, upgrade_callback, referral_menu_callback
+    from handlers.admin import admin_panel_callback, admin_channels_callback, ban_command, unban_command, setpremium_command
+    from handlers.settings import settings_callback
+    from handlers.templates import (templates_menu_callback, create_tpl_callback, handle_template_input, view_tpl_callback, del_tpl_callback)
 
-    app = Application.builder().token(Config.BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("ban", ban_command))
+    application.add_handler(CommandHandler("unban", unban_command))
+    application.add_handler(CommandHandler("setpremium", setpremium_command))
+    application.add_handler(ChatJoinRequestHandler(handle_join_request))
+    application.add_handler(ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    application.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^main_menu$"))
+    application.add_handler(CallbackQueryHandler(my_channels_callback, pattern="^my_channels$"))
+    application.add_handler(CallbackQueryHandler(channel_settings_callback, pattern="^ch_settings:"))
+    application.add_handler(CallbackQueryHandler(toggle_approve_callback, pattern="^toggle_approve:"))
+    application.add_handler(CallbackQueryHandler(toggle_welcome_callback, pattern="^toggle_welcome:"))
+    application.add_handler(CallbackQueryHandler(edit_welcome_callback, pattern="^edit_welcome:"))
+    application.add_handler(CallbackQueryHandler(approve_mode_callback, pattern="^approve_mode:"))
+    application.add_handler(CallbackQueryHandler(set_mode_callback, pattern="^set_mode:"))
+    application.add_handler(CallbackQueryHandler(broadcast_menu_callback, pattern="^broadcast_menu$"))
+    application.add_handler(CallbackQueryHandler(bc_channel_callback, pattern="^bc_channel:"))
+    application.add_handler(CallbackQueryHandler(bc_global_callback, pattern="^bc_global$"))
+    application.add_handler(CallbackQueryHandler(analytics_menu_callback, pattern="^analytics_menu$"))
+    application.add_handler(CallbackQueryHandler(channel_analytics_callback, pattern="^ch_analytics:"))
+    application.add_handler(CallbackQueryHandler(premium_menu_callback, pattern="^premium_menu$"))
+    application.add_handler(CallbackQueryHandler(upgrade_callback, pattern="^upgrade_"))
+    application.add_handler(CallbackQueryHandler(referral_menu_callback, pattern="^referral_menu$"))
+    application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern="^admin_panel$"))
+    application.add_handler(CallbackQueryHandler(admin_channels_callback, pattern="^admin_channels$"))
+    application.add_handler(CallbackQueryHandler(settings_callback, pattern="^settings$"))
+    application.add_handler(CallbackQueryHandler(templates_menu_callback, pattern="^templates_menu$"))
+    application.add_handler(CallbackQueryHandler(create_tpl_callback, pattern="^create_tpl$"))
+    application.add_handler(CallbackQueryHandler(view_tpl_callback, pattern="^view_tpl:"))
+    application.add_handler(CallbackQueryHandler(del_tpl_callback, pattern="^del_tpl:"))
+    application.add_handler(CallbackQueryHandler(lambda u,c: u.callback_query.answer() or help_command(u,c), pattern="^help_menu$"))
 
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("dashboard", dashboard_command))
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("referral", referral_command))
-    app.add_handler(CommandHandler("setdrip", setdrip_command))
-    app.add_handler(CommandHandler("ban", admin_ban_command))
-    app.add_handler(CommandHandler("unban", admin_unban_command))
-    app.add_handler(CommandHandler("settier", admin_set_tier_command))
+    async def handle_text_input(update, context):
+        if not update.message: return
+        if await handle_welcome_message_input(update, context): return
+        if await handle_template_input(update, context): return
+        if await handle_broadcast_input(update, context): return
 
-    app.add_handler(ChatMemberHandler(channel_detection_handler, ChatMemberHandler.MY_CHAT_MEMBER))
-    app.add_handler(ChatJoinRequestHandler(join_request_handler))
-    app.add_handler(CallbackQueryHandler(callback_router))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_text_input))
+    application.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Document.ALL) & filters.ChatType.PRIVATE, handle_broadcast_input))
+    logger.info("All handlers registered")
 
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-        handle_text_message
-    ))
-
-    setup_scheduler(app)
-
-    async def post_init(application):
-        await run_migrations()
-        logger.info("Post-init migrations complete")
-
-    app.post_init = post_init
-
-    logger.info("Starting bot in polling mode...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-
-
-async def handle_text_message(update: Update, context):
-    if not update.message or not update.message.text:
-        return
-    ud = context.user_data
-    state = ud.get("state")
-    if state == "awaiting_broadcast_message" or ud.get("bc_setup"):
-        from handlers.broadcast import broadcast_message_handler
-        await broadcast_message_handler(update, context)
-    elif state == "awaiting_template_body" or ud.get("creating_template"):
-        from handlers.template_mgmt import template_content_handler
-        await template_content_handler(update, context)
-    elif state == "awaiting_autopost_message" or ud.get("autopost_setup"):
-        from handlers.auto_poster import autopost_content_handler
-        await autopost_content_handler(update, context)
-    elif state == "awaiting_welcome_dm" or ud.get("editing_welcome_for"):
-        from handlers.welcome_dm import welcome_message_handler
-        await welcome_message_handler(update, context)
-    elif ud.get("fs_add_for"):
-        from handlers.force_subscribe import handle_force_sub_add
-        await handle_force_sub_add(update, context)
-    elif ud.get("admin_broadcast"):
-        from handlers.admin_panel import admin_broadcast_handler
-        await admin_broadcast_handler(update, context)
-    elif ud.get("editing_setting"):
-        from handlers.admin_panel import admin_setting_handler
-        await admin_setting_handler(update, context)
-
+async def main():
+    logger.info("Starting Telegram Growth Engine...")
+    await run_health_server()
+    application = Application.builder().token(BOT_TOKEN).build()
+    setup_handlers(application)
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    logger.info("Bot is running!")
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, SystemExit):
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
