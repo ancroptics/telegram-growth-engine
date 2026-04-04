@@ -1,73 +1,72 @@
-"""Broadcast handlers."""
+"""Broadcast handler."""
 import logging
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from database.models import get_owner_channels, create_broadcast, get_broadcast_recipients, update_broadcast_progress, mark_user_blocked, get_broadcast_by_id
-
+from database.models import (get_owner_channels, get_channel_users, get_all_user_ids,
+    create_broadcast, update_broadcast, mark_user_blocked)
+from config import ADMIN_IDS
 logger = logging.getLogger(__name__)
 
-
-async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def broadcast_menu_callback(update, context):
     query = update.callback_query
-    data = query.data
-    user_id = update.effective_user.id
-    if data == "broadcast_menu":
-        channels = await get_owner_channels(user_id)
-        if not channels:
-            await query.message.edit_text("\U0001f4e2 No channels. Add me to a channel first!",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u00ab Back", callback_data="main_menu")]]))
-            return
-        buttons = [[InlineKeyboardButton(ch.get("chat_title", "?")[:30], callback_data=f"bc_ch:{ch['chat_id']}")] for ch in channels]
-        buttons.append([InlineKeyboardButton("\u00ab Back", callback_data="main_menu")])
-        await query.message.edit_text("\U0001f4e2 <b>Broadcast</b>\nSelect a channel:", parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(buttons))
-    elif data.startswith("bc_ch:"):
-        chat_id = int(data.split(":")[1])
-        context.user_data["bc_setup"] = {"channel_id": chat_id}
-        await query.message.edit_text("\U0001f4e2 Send the broadcast message (text, photo, or video):",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u274c Cancel", callback_data="broadcast_menu")]]))
-    elif data.startswith("bc_send:"):
-        bc_id = int(data.split(":")[1])
-        bc = await get_broadcast_by_id(bc_id)
-        if not bc:
-            await query.answer("Broadcast not found!")
-            return
-        recipients = await get_broadcast_recipients(bc["owner_id"], bc.get("channel_id"))
-        sent, failed, blocked = 0, 0, 0
-        await update_broadcast_progress(bc_id, 0, 0, 0, "sending")
-        for uid in recipients:
-            try:
-                if bc["content_type"] == "text":
-                    await context.bot.send_message(uid, bc["content"], parse_mode="HTML")
-                elif bc["content_type"] == "photo":
-                    await context.bot.send_photo(uid, bc["media_file_id"], caption=bc.get("caption"), parse_mode="HTML")
-                sent += 1
-            except Exception as e:
-                if "blocked" in str(e).lower() or "deactivated" in str(e).lower():
-                    blocked += 1
-                    await mark_user_blocked(uid)
-                else:
-                    failed += 1
-        await update_broadcast_progress(bc_id, sent, failed, blocked, "completed")
-        await query.message.edit_text(f"\U0001f4e2 Broadcast complete!\n\u2705 Sent: {sent}\n\u274c Failed: {failed}\n\U0001f6ab Blocked: {blocked}")
+    await query.answer()
+    channels = await get_owner_channels(query.from_user.id)
+    buttons = [[InlineKeyboardButton(ch.get("chat_title","?"), callback_data=f"bc_channel:{ch['chat_id']}")] for ch in channels]
+    if query.from_user.id in ADMIN_IDS:
+        buttons.append([InlineKeyboardButton("Global Broadcast", callback_data="bc_global")])
+    buttons.append([InlineKeyboardButton("Back", callback_data="main_menu")])
+    await query.message.edit_text("Select channel to broadcast to:", reply_markup=InlineKeyboardMarkup(buttons))
 
+async def bc_channel_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    chat_id = int(query.data.split(":")[1])
+    context.user_data["bc_target"] = chat_id
+    context.user_data["bc_type"] = "channel"
+    await query.message.edit_text("Send message to broadcast (text, photo, or video):",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="broadcast_menu")]]))
 
-async def broadcast_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    setup = context.user_data.pop("bc_setup", None)
-    if not setup:
+async def bc_global_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in ADMIN_IDS:
+        await query.answer("Admin only!", show_alert=True)
         return
-    msg = update.message
-    channel_id = setup["channel_id"]
-    owner_id = msg.from_user.id
-    if msg.photo:
-        bc_id = await create_broadcast(owner_id, channel_id, "photo", media_file_id=msg.photo[-1].file_id, caption=msg.caption)
-    elif msg.video:
-        bc_id = await create_broadcast(owner_id, channel_id, "video", media_file_id=msg.video.file_id, caption=msg.caption)
+    context.user_data["bc_target"] = "global"
+    context.user_data["bc_type"] = "global"
+    await query.message.edit_text("Send message for global broadcast:",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data="broadcast_menu")]]))
+
+async def handle_broadcast_input(update, context):
+    target = context.user_data.get("bc_target")
+    if not target: return False
+    context.user_data.pop("bc_target", None)
+    bc_type = context.user_data.pop("bc_type", "channel")
+    if bc_type == "global":
+        user_ids = await get_all_user_ids()
     else:
-        bc_id = await create_broadcast(owner_id, channel_id, "text", content=msg.text)
-    recipients = await get_broadcast_recipients(owner_id, channel_id)
-    buttons = [
-        [InlineKeyboardButton(f"\U0001f4e4 Send to {len(recipients)} users", callback_data=f"bc_send:{bc_id}")],
-        [InlineKeyboardButton("\u274c Cancel", callback_data="broadcast_menu")],
-    ]
-    await msg.reply_text(f"\U0001f4e2 Broadcast ready! Target: {len(recipients)} users.", reply_markup=InlineKeyboardMarkup(buttons))
+        rows = await get_channel_users(target)
+        user_ids = [r["user_id"] for r in rows] if rows else []
+    if not user_ids:
+        await update.message.reply_text("No users to broadcast to.")
+        return True
+    bc = await create_broadcast(update.effective_user.id, str(target), update.message.text or "(media)")
+    sent = failed = 0
+    for uid in user_ids:
+        try:
+            if update.message.photo:
+                await context.bot.send_photo(uid, update.message.photo[-1].file_id, caption=update.message.caption)
+            elif update.message.video:
+                await context.bot.send_video(uid, update.message.video.file_id, caption=update.message.caption)
+            else:
+                await context.bot.send_message(uid, update.message.text)
+            sent += 1
+        except Exception as e:
+            failed += 1
+            if "blocked" in str(e).lower() or "deactivated" in str(e).lower():
+                await mark_user_blocked(uid)
+    if bc:
+        await update_broadcast(bc.get("id"), status="done", sent_count=sent, failed_count=failed)
+    await update.message.reply_text(f"Broadcast done! Sent: {sent}, Failed: {failed}",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="main_menu")]]))
+    return True
